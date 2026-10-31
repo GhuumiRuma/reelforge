@@ -606,15 +606,20 @@ export async function freezeFrame() {
 
 /** Adds a clip from the library: video at the playhead (or on top as an overlay), audio as music. */
 export async function insertLibraryClip(clip: ClipMeta, target: 'main' | 'overlay' = 'main'): Promise<boolean> {
-  if (!ed().project) return false;
+  const projectId = ed().project?.id;
+  if (!projectId) return false;
+  // The clip lands at the playhead, so stop playback before the first await: it must not move while the clip loads.
+  pause();
+  // The user can leave while the clip loads (the task is only a status pill): never add it to another project.
+  const stillOpen = () => ed().project?.id === projectId;
   ed().setTask({ label: 'Adding clip…', progress: null });
   try {
     const asset = await importClip(clip.id);
+    if (!stillOpen()) return false;
     if (!asset) {
       toast('That clip is no longer in your library', 'error');
       return false;
     }
-    if (!ed().project) return false;
     if (asset.kind === 'audio') addAudio(asset, 'music', audioStart(), clip.name, true);
     else insertMedia([asset], target, { autoAspect: target === 'main' });
     return true;
@@ -623,7 +628,8 @@ export async function insertLibraryClip(clip: ClipMeta, target: 'main' | 'overla
     toast('Couldn’t add that clip', 'error');
     return false;
   } finally {
-    ed().setTask(null);
+    // Leaving the editor already cleared the task, and a project opened since may have its own.
+    if (stillOpen()) ed().setTask(null);
   }
 }
 

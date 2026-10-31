@@ -134,6 +134,8 @@ function MyClips({ onClose }: { onClose: () => void }) {
       .catch(() => undefined);
   }, [alive]);
 
+  useEffect(() => () => getEngine()?.audio.stopPreview(), []);
+
   const play = (id: string) =>
     void getEngine()
       ?.audio.preview(
@@ -147,6 +149,7 @@ function MyClips({ onClose }: { onClose: () => void }) {
   const add = async (clip: ClipMeta) => {
     if (adding.current) return;
     adding.current = true;
+    getEngine()?.audio.stopPreview();
     try {
       if (!(await insertLibraryClip(clip))) return;
       haptic('light');

@@ -349,6 +349,8 @@ export class AudioPlayback {
   private lastPn = 0;
   private lastNow = 0;
   private silenced = false;
+  private previewNode: AudioBufferSourceNode | null = null;
+  private previewGen = 0;
 
   constructor(private getProject: () => Project) {}
 
@@ -451,6 +453,7 @@ export class AudioPlayback {
   }
 
   stop() {
+    this.stopPreview();
     if (this.running) this.base = this.now();
     this.running = false;
     this.gen++;
@@ -528,17 +531,42 @@ export class AudioPlayback {
     }
   }
 
-  /** Plays a short clip immediately (used for SFX previews). Call from the tap so iOS unlocks audio. */
+  /** Plays a clip immediately (SFX and saved clips), replacing any preview still playing or loading. Call from the tap so iOS unlocks audio. */
   async preview(blob: Blob | Promise<Blob>) {
+    this.stopPreview();
+    const gen = this.previewGen;
     const ctx = this.ensureCtx();
     const resumed = ctx.state !== 'running' ? ctx.resume().catch(() => undefined) : null;
-    const data = await (await blob).arrayBuffer();
-    if (resumed) await resumed;
-    const buf = await ctx.decodeAudioData(data);
-    const n = ctx.createBufferSource();
-    n.buffer = buf;
-    n.connect(this.master!);
-    n.start();
+    try {
+      const data = await (await blob).arrayBuffer();
+      if (resumed) await resumed;
+      if (gen !== this.previewGen) return;
+      const buf = await ctx.decodeAudioData(data);
+      if (gen !== this.previewGen) return;
+      const n = ctx.createBufferSource();
+      n.buffer = buf;
+      n.connect(this.master!);
+      n.onended = () => {
+        if (this.previewNode === n) this.previewNode = null;
+      };
+      n.start();
+      this.previewNode = n;
+    } catch (e) {
+      // A preview that was replaced or stopped has nobody left to report to.
+      if (gen === this.previewGen) throw e;
+    }
+  }
+
+  /** Silences the preview and cancels one that is still loading. Timeline playback stops it too. */
+  stopPreview() {
+    this.previewGen++;
+    const n = this.previewNode;
+    this.previewNode = null;
+    try {
+      n?.stop();
+    } catch {
+      /* already stopped */
+    }
   }
 
   dispose() {
