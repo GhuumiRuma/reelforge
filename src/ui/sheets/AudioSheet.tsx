@@ -1,15 +1,17 @@
 import { Circle, LoaderCircle, Mic, Music, Plus, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { VideoItem } from '../../types';
+import type { ClipMeta, VideoItem } from '../../types';
 import { encodeWav } from '../../engine/audio';
 import { importSfx, renderSfx, SFX } from '../../engine/sfx';
+import { filterClips } from '../../lib/clip';
+import { getClip, listClips } from '../../lib/db';
 import { pickFiles } from '../../lib/device';
 import { haptic } from '../../lib/haptics';
 import { decodeWholeAudio, importFiles } from '../../lib/media';
-import { formatTime, isIOS } from '../../lib/util';
+import { formatDuration, formatTime, isIOS } from '../../lib/util';
 import { duration, getEngine, now, pause } from '../../state/runtime';
 import { toast, useEditor, useTime } from '../../state/store';
-import { addAudio, prettyName } from '../actions';
+import { addAudio, audioStart, insertLibraryClip, prettyName } from '../actions';
 import { Segmented, Sheet, Toggle } from '../common';
 
 type Tab = 'music' | 'sfx' | 'record';
@@ -29,12 +31,6 @@ function setSessionType(type: string) {
   } catch {
     /* not supported */
   }
-}
-
-/** Start time for new audio: the playhead, or the beginning when the playhead is at the very end. */
-function startAt(): number {
-  const t = now();
-  return t >= duration() - 0.1 ? 0 : t;
 }
 
 function useAlive() {
@@ -92,7 +88,7 @@ function MusicPane({ onClose }: { onClose: () => void }) {
         if (a.kind === 'image') return toast('Choose a song or a video with sound', 'error');
         if (!a.hasAudio) return toast('That file has no sound', 'error');
         if (!useEditor.getState().project) return;
-        addAudio(a, 'music', startAt(), a.kind === 'video' ? `${prettyName(a.name)} sound` : undefined, true);
+        addAudio(a, 'music', audioStart(), a.kind === 'video' ? `${prettyName(a.name)} sound` : undefined, true);
         haptic('light');
         if (alive.current) onClose();
       } finally {
@@ -116,9 +112,68 @@ function MusicPane({ onClose }: { onClose: () => void }) {
         Pick a song, or a video to use its sound.
         {isIOS && ' On iPhone, save songs to the Files app first — Apple Music downloads can’t be used.'}
       </p>
+      <MyClips onClose={onClose} />
       {original >= 0 && (
         <Toggle checked={original === 1} onChange={setOriginal} label="Original sound" hint="Sound recorded with your video clips" />
       )}
+    </>
+  );
+}
+
+/** Audio clips saved in the clip library: tap a name to hear it, + to add it at the playhead. */
+function MyClips({ onClose }: { onClose: () => void }) {
+  const alive = useAlive();
+  const adding = useRef(false);
+  const [clips, setClips] = useState<ClipMeta[]>([]);
+
+  useEffect(() => {
+    void listClips()
+      .then((all) => {
+        if (alive.current) setClips(filterClips(all.map((r) => r.meta), { folder: 'all', kind: 'audio', query: '' }));
+      })
+      .catch(() => undefined);
+  }, [alive]);
+
+  const play = (id: string) =>
+    void getEngine()
+      ?.audio.preview(
+        getClip(id).then((rec) => {
+          if (!rec) throw new Error('clip missing');
+          return rec.blob;
+        }),
+      )
+      .catch(() => toast('Couldn’t play that clip', 'error'));
+
+  const add = async (clip: ClipMeta) => {
+    if (adding.current) return;
+    adding.current = true;
+    try {
+      if (!(await insertLibraryClip(clip))) return;
+      haptic('light');
+      if (alive.current) onClose();
+    } finally {
+      adding.current = false;
+    }
+  };
+
+  if (!clips.length) return null;
+  return (
+    <>
+      <h3 className="section-title">My clips</h3>
+      <div className="sfx-grid list">
+        {clips.map((c) => (
+          <div key={c.id} className="sfx">
+            <button className="name" aria-label={`Play ${c.name}`} onClick={() => play(c.id)}>
+              <Music size={18} aria-hidden />
+              <span>{c.name}</span>
+              <small className="tnum">{formatDuration(c.duration)}</small>
+            </button>
+            <button className="icon-btn" aria-label={`Add ${c.name}`} onClick={() => void add(c)}>
+              <Plus size={20} />
+            </button>
+          </div>
+        ))}
+      </div>
     </>
   );
 }

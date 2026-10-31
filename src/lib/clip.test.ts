@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ClipMeta } from '../types';
 import {
   checkClipRange,
+  clipSourceRange,
   cropForAspect,
   cropPixels,
   filterClips,
@@ -32,6 +33,31 @@ describe('checkClipRange', () => {
 
   it('snaps an end just past the source to its end', () => {
     expect(checkClipRange('50', '60.6', 60)).toEqual({ ok: true, start: 50, end: 60 });
+  });
+});
+
+describe('clipSourceRange', () => {
+  it('covers the source a timeline clip plays', () => {
+    expect(clipSourceRange({ in: 2, duration: 3, speed: 1 }, 10)).toEqual({ start: 2, end: 5 });
+  });
+
+  it('uses more or less source when the speed changes', () => {
+    expect(clipSourceRange({ in: 1, duration: 2, speed: 2 }, 10)).toEqual({ start: 1, end: 5 });
+    expect(clipSourceRange({ in: 1, duration: 4, speed: 0.5 }, 10)).toEqual({ start: 1, end: 3 });
+  });
+
+  it('stops at the end of the source', () => {
+    expect(clipSourceRange({ in: 8, duration: 5, speed: 1 }, 10)).toEqual({ start: 8, end: 10 });
+  });
+
+  it('rounds away floating point noise', () => {
+    expect(clipSourceRange({ in: 0.1 + 0.2, duration: 1, speed: 1 }, 10)).toEqual({ start: 0.3, end: 1.3 });
+  });
+
+  it('refuses less than the shortest clip', () => {
+    expect(clipSourceRange({ in: 9.95, duration: 1, speed: 1 }, 10)).toBeNull();
+    expect(clipSourceRange({ in: 0, duration: 0.05, speed: 1 }, 10)).toBeNull();
+    expect(clipSourceRange({ in: 12, duration: 1, speed: 1 }, 10)).toBeNull();
   });
 });
 

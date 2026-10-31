@@ -1,12 +1,13 @@
 import { Film, ImageIcon, ImagePlus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { MediaAsset } from '../../types';
-import { projectMediaIds } from '../../lib/db';
+import type { ClipMeta, MediaAsset } from '../../types';
+import { filterClips } from '../../lib/clip';
+import { listClips, projectMediaIds } from '../../lib/db';
 import { pickFiles } from '../../lib/device';
 import { ensureThumbs, getThumbStrip, loadAssets, mediaEvents } from '../../lib/media';
 import { formatDuration } from '../../lib/util';
 import { useEditor } from '../../state/store';
-import { addColorClip, importAndInsert, insertMedia } from '../actions';
+import { addColorClip, importAndInsert, insertLibraryClip, insertMedia } from '../actions';
 import { colorName, PALETTE, Sheet } from '../common';
 
 export function MediaSheet({ target, onClose }: { target: 'main' | 'overlay'; onClose: () => void }) {
@@ -60,6 +61,7 @@ export function MediaSheet({ target, onClose }: { target: 'main' | 'overlay'; on
           </div>
         </>
       )}
+      <MyClips target={target} onClose={onClose} />
       <h3 className="section-title">Color clip</h3>
       <div className="swatches" role="group" aria-label="Color clip">
         {PALETTE.map((c) => (
@@ -69,6 +71,75 @@ export function MediaSheet({ target, onClose }: { target: 'main' | 'overlay'; on
         ))}
       </div>
     </Sheet>
+  );
+}
+
+interface ClipRow {
+  meta: ClipMeta;
+  poster: Blob | null;
+}
+
+/** Video clips saved in the clip library (newest first). Tap one to add the whole clip. */
+function MyClips({ target, onClose }: { target: 'main' | 'overlay'; onClose: () => void }) {
+  const [rows, setRows] = useState<ClipRow[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    void listClips()
+      .then((all) => {
+        if (!alive) return;
+        const posters = new Map(all.map((r) => [r.meta.id, r.poster]));
+        const metas = filterClips(
+          all.map((r) => r.meta),
+          { folder: 'all', kind: 'video', query: '' },
+        );
+        setRows(metas.map((meta) => ({ meta, poster: posters.get(meta.id) ?? null })));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!rows.length) return null;
+  return (
+    <>
+      <h3 className="section-title">My clips</h3>
+      <div className="media-grid">
+        {rows.map((r) => (
+          <ClipThumb
+            key={r.meta.id}
+            row={r}
+            onPick={() => {
+              onClose();
+              void insertLibraryClip(r.meta, target);
+            }}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
+function ClipThumb({ row, onPick }: { row: ClipRow; onPick: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!row.poster) return;
+    const u = URL.createObjectURL(row.poster);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [row.poster]);
+
+  return (
+    <button className="media-cell" aria-label={`Add ${row.meta.name}`} onClick={onPick}>
+      <span className="media-thumb" aria-hidden>
+        <Film size={22} />
+        {url && <img src={url} alt="" />}
+        <small>{formatDuration(row.meta.duration)}</small>
+      </span>
+      <span className="media-name">{row.meta.name}</span>
+    </button>
   );
 }
 
