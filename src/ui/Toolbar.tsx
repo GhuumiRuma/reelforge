@@ -3,6 +3,7 @@ import {
   ArrowRightLeft,
   AudioLines,
   Blend,
+  BookmarkPlus,
   Captions,
   ChevronLeft,
   CircleDashed,
@@ -48,6 +49,7 @@ import {
   freezeFrame,
   replaceSelected,
   rotateSelected,
+  saveSelectedAsClip,
   splitAtPlayhead,
   targetMain,
   toggleFit,
@@ -131,6 +133,7 @@ const editText = (id: string) => () => {
 
 function itemTools(item: Item, kind: TrackKind, index: number, keyframeHere: boolean): Tool[] {
   const split: Tool = { key: 'split', label: 'Split', Icon: Scissors, run: splitAtPlayhead };
+  const saveClip: Tool = { key: 'saveClip', label: 'Save clip', Icon: BookmarkPlus, run: () => void saveSelectedAsClip() };
   const del: Tool = { key: 'delete', label: 'Delete', Icon: Trash, run: deleteSelected };
   const dup: Tool = { key: 'duplicate', label: 'Duplicate', Icon: Copy, run: duplicateSelected };
 
@@ -139,6 +142,7 @@ function itemTools(item: Item, kind: TrackKind, index: number, keyframeHere: boo
       sheetTool('volume', 'Volume', item.muted ? VolumeX : Volume2),
       sheetTool('speed', 'Speed', Gauge),
       split,
+      saveClip,
       dup,
       del,
     ];
@@ -189,6 +193,7 @@ function itemTools(item: Item, kind: TrackKind, index: number, keyframeHere: boo
 
   return [
     split,
+    saveClip,
     sheetTool('speed', 'Speed', Gauge),
     sheetTool('volume', 'Volume', item.muted ? VolumeX : Volume2),
     del,

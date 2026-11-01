@@ -4,6 +4,7 @@
 import type {
   Aspect,
   AudioItem,
+  ClipMeta,
   ImageItem,
   Item,
   MainItem,
@@ -15,8 +16,11 @@ import type {
   Visual,
   VisualItem,
 } from '../types';
+import { ClipError, encodeClip, posterFrame } from '../engine/clip';
+import { clipSourceRange, timeStamp, uniqueName } from '../lib/clip';
+import { listClips, putClip, requestPersistence } from '../lib/db';
 import { aspectFor, audioItem, colorItem, imageItem, textItem, videoItem } from '../lib/defaults';
-import { primeKeyboard } from '../lib/device';
+import { acquireWakeLock, primeKeyboard } from '../lib/device';
 import { haptic } from '../lib/haptics';
 import {
   deleteItem,
@@ -34,10 +38,12 @@ import {
   upsertKeyframe,
   type KeyValues,
 } from '../lib/layout';
-import { captureFrame, getAsset, importFiles } from '../lib/media';
-import { clamp, formatClock } from '../lib/util';
-import { now, pause, seek } from '../state/runtime';
+import { importClip } from '../lib/library';
+import { captureFrame, getAsset, getBlob, importFiles } from '../lib/media';
+import { clamp, formatClock, safeFileName, uid } from '../lib/util';
+import { duration, now, pause, seek } from '../state/runtime';
 import { selectedItem, toast, useEditor, type ApplyOptions } from '../state/store';
+import { promptDialog } from './dialog';
 
 const ed = () => useEditor.getState();
 
@@ -412,6 +418,12 @@ function visualEnd(p: Project): number {
   return e;
 }
 
+/** Start time for new audio: the playhead, or the beginning when the playhead is at the very end. */
+export function audioStart(): number {
+  const t = now();
+  return t >= duration() - 0.1 ? 0 : t;
+}
+
 export function addAudio(asset: MediaAsset, role: AudioItem['role'], start = now(), name?: string, select = false) {
   const it = audioItem(asset, start, role, name ?? prettyName(asset.name));
   const p = ed().project;
@@ -586,5 +598,136 @@ export async function freezeFrame() {
     toast('Could not capture this frame', 'error');
   } finally {
     ed().setTask(null);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reusable clips: bits saved to the clip library can be added to any project.
+
+/** Adds a clip from the library: video at the playhead (or on top as an overlay), audio as music. */
+export async function insertLibraryClip(clip: ClipMeta, target: 'main' | 'overlay' = 'main'): Promise<boolean> {
+  const projectId = ed().project?.id;
+  if (!projectId) return false;
+  // The clip lands at the playhead, so stop playback before the first await: it must not move while the clip loads.
+  pause();
+  // The user can leave while the clip loads (the task is only a status pill): never add it to another project.
+  const stillOpen = () => ed().project?.id === projectId;
+  ed().setTask({ label: 'Adding clip…', progress: null });
+  try {
+    const asset = await importClip(clip.id);
+    if (!stillOpen()) return false;
+    if (!asset) {
+      toast('That clip is no longer in your library', 'error');
+      return false;
+    }
+    if (asset.kind === 'audio') addAudio(asset, 'music', audioStart(), clip.name, true);
+    else insertMedia([asset], target, { autoAspect: target === 'main' });
+    return true;
+  } catch (e) {
+    console.error(e);
+    toast('Couldn’t add that clip', 'error');
+    return false;
+  } finally {
+    // Leaving the editor already cleared the task, and a project opened since may have its own.
+    if (stillOpen()) ed().setTask(null);
+  }
+}
+
+interface LibraryJob {
+  kind: 'video' | 'audio';
+  start: number;
+  end: number;
+  name: string;
+  /** what it was cut from, shown in the library */
+  source: string;
+}
+
+/** Cuts `start`–`end` out of `blob` and stores it in the clip library. */
+async function saveToLibrary(blob: Blob, job: LibraryJob) {
+  const lock = await acquireWakeLock();
+  try {
+    const res = await encodeClip(blob, {
+      kind: job.kind,
+      start: job.start,
+      end: job.end,
+      name: job.name,
+      onProgress: (p) => ed().setTask({ label: 'Saving clip…', progress: p }),
+    });
+    const poster = job.kind === 'video' ? await posterFrame(res.file, Math.min(0.5, res.duration / 2)) : null;
+    const name = uniqueName(job.name, (await listClips()).map((c) => c.meta.name));
+    await putClip({
+      meta: {
+        id: uid('c_'),
+        name,
+        kind: job.kind,
+        mime: res.file.type,
+        fileName: res.file.name,
+        size: res.file.size,
+        duration: res.duration,
+        width: res.width,
+        height: res.height,
+        folderId: null,
+        source: job.source,
+        start: job.start,
+        end: job.end,
+        createdAt: Date.now(),
+      },
+      blob: res.file,
+      poster,
+    });
+    void requestPersistence();
+  } finally {
+    void lock?.release();
+  }
+}
+
+let savingClip = false;
+
+/** Saves the footage the selected video or audio clip plays (its edges, not its speed or effects) as a reusable clip. */
+export async function saveSelectedAsClip() {
+  const item = selectedItem(ed())?.item;
+  if (savingClip || !item || (item.type !== 'video' && item.type !== 'audio')) return;
+  const asset = getAsset(item.mediaId);
+  if (!asset) {
+    toast('This clip’s file is missing', 'error');
+    return;
+  }
+  const range = clipSourceRange(item, asset.duration);
+  if (!range) {
+    toast('That piece is too short to save as a clip');
+    return;
+  }
+  const { start, end } = range;
+  const suggestion = item.type === 'audio' ? item.name : `${prettyName(asset.name)} ${timeStamp(start)}-${timeStamp(end)}`;
+  savingClip = true;
+  try {
+    // First await, straight from the tap, so the iOS keyboard can open.
+    const answer = await promptDialog({ title: 'Save clip', value: safeFileName(suggestion, 'Clip'), placeholder: 'Clip name', confirm: 'Save' });
+    if (answer === null) return;
+    const blob = await getBlob(item.mediaId);
+    if (!blob) {
+      toast('This clip’s file is missing', 'error');
+      return;
+    }
+    ed().setTask({ label: 'Saving clip…', progress: 0 });
+    try {
+      await saveToLibrary(blob, { kind: item.type, start, end, name: safeFileName(answer, 'Clip'), source: prettyName(asset.name) });
+      toast(item.speed === 1 ? 'Saved to your clips' : 'Saved to your clips at normal speed', 'success');
+      haptic('medium');
+    } catch (err) {
+      console.error('Saving the clip failed', err);
+      toast(
+        (err as Error)?.name === 'QuotaExceededError'
+          ? 'The phone is out of space for clips. Delete some and try again.'
+          : err instanceof ClipError
+            ? err.message
+            : 'Saving the clip failed.',
+        'error',
+      );
+    } finally {
+      ed().setTask(null);
+    }
+  } finally {
+    savingClip = false;
   }
 }

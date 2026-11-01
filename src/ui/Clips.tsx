@@ -5,8 +5,9 @@ import { filterClips, uniqueName, type KindFilter } from '../lib/clip';
 import { deleteClip, deleteFolder, getClip, listClips, listFolders, putFolder, requestPersistence, saveProject, updateClipMeta } from '../lib/db';
 import { newProject } from '../lib/defaults';
 import { shareFile } from '../lib/device';
+import { clipFile } from '../lib/library';
 import { openProject } from '../lib/route';
-import { downloadBlob, formatBytes, formatDuration, safeFileName, uid } from '../lib/util';
+import { downloadBlob, formatBytes, formatDuration, uid } from '../lib/util';
 import { toast } from '../state/store';
 import { setPendingImport } from './actions';
 import { Segmented, Sheet } from './common';
@@ -15,13 +16,6 @@ import { confirmDialog, menuDialog, promptDialog } from './dialog';
 interface Row {
   meta: ClipMeta;
   poster: Blob | null;
-}
-
-async function clipFile(id: string): Promise<File | null> {
-  const rec = await getClip(id);
-  if (!rec) return null;
-  const ext = rec.meta.fileName.split('.').pop() ?? (rec.meta.kind === 'audio' ? 'm4a' : 'mp4');
-  return new File([rec.blob], `${safeFileName(rec.meta.name, 'Clip')}.${ext}`, { type: rec.meta.mime });
 }
 
 async function shareClip(id: string) {

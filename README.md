@@ -14,7 +14,7 @@ After the first visit it works offline. Auto-captions download a speech model (a
 
 ## What you can do
 
-- **Clips:** import videos, photos and audio, then trim, split, duplicate, reorder, replace, rotate, flip, freeze a frame, extract the audio and make soundbites.
+- **Clips:** import videos, photos and audio, then trim, split, duplicate, reorder, replace, rotate, flip, freeze a frame, extract the audio and make soundbites. Save any piece of a clip to **My clips** and reuse it in this or any other project.
 - **Speed:** 0.1× to 10×, with pitch that follows the speed.
 - **Canvas:** 9:16, 16:9, 1:1, 4:5, 3:4, 4:3 and 21:9; fit or fill; a blurred or solid color background.
 - **Text and stickers:** styled text presets, 12 fonts, outline, shadow, background, emoji stickers, and in and out animations.
@@ -36,7 +36,7 @@ Tap **Clip studio** on the home screen to watch, search and clip on one screen.
 4. **YouTube videos** download first (Android app only): pick 360p, 720p or 1080p and tap **Download to crop and clip**. Your start and end stay marked.
 5. **Name it, pick a folder and tap Save.** Video clips are saved as MP4 and audio clips as .m4a (or .wav).
 
-Saved clips appear under **Clips** on the home screen. There you can make folders, filter by video or audio, search, play, share, save to the device (Documents/ReelForge in the Android app), rename, move, delete, or open a clip in a new editing project.
+Saved clips appear under **Clips** on the home screen. There you can make folders, filter by video or audio, search, play, share, save to the device (Documents/ReelForge in the Android app), rename, move, delete, or open a clip in a new editing project. While you edit, the same clips are in **My clips** (see below).
 
 Only download and clip videos you own or have permission to use, and follow the Terms of Service of YouTube, TikTok and Instagram. These sites change how they serve videos from time to time, so searches or downloads may stop working until the app is updated.
 
@@ -47,6 +47,14 @@ Only download and clip videos you own or have permission to use, and follow the 
 3. Tap **Add to audio track** to place it at the playhead, or **Save audio file** to share or download it as an .m4a file (or .wav if the device can't make .m4a files).
 
 The clip keeps its own sound, so move the soundbite or mute the clip if you hear both at once.
+
+## Chop up clips and reuse the pieces
+
+1. **Split.** Move the playhead to where you want the cut and tap **Split** (the scissors), or press `S`. With nothing selected it cuts the main-track clip under the playhead; select an overlay or audio clip first to cut that one. Drag a clip's edges to trim it. Touch and hold a clip for a moment, then drag it to move or reorder it.
+2. **Save a piece.** Select a video or audio clip and tap **Save clip**. Name it and tap **Save**. It is saved between the clip's edges, so split and trim first to get just the bit you want.
+3. **Reuse it.** Tap **Media** or **Overlay** for video bits, or **Audio** for audio bits, then pick one under **My clips**. On the main track a video bit goes in at the clip edge nearest the playhead; as an overlay it goes in at the playhead. Audio bits go on the audio track at the playhead.
+
+Saved pieces are the same clips as under **Clips** on the home screen, so you can use them in any project. A saved piece is the original footage between the clip's edges. Speed, filters, volume and other changes you made to the clip are not included, and the toast tells you when speed was left out.
 
 ## Privacy
 

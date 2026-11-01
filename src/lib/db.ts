@@ -78,6 +78,10 @@ export async function getMedia(id: string): Promise<{ asset: MediaAsset; blob: B
   return (await db()).get('media', id);
 }
 
+export async function hasMedia(id: string): Promise<boolean> {
+  return (await (await db()).getKey('media', id)) !== undefined;
+}
+
 export async function getThumbs(id: string): Promise<ThumbRecord | undefined> {
   return (await db()).get('thumbs', id);
 }

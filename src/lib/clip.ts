@@ -190,6 +190,18 @@ export function uniqueName(base: string, taken: Iterable<string>): string {
   for (let i = 2; ; i++) if (!names.has(`${base} ${i}`)) return `${base} ${i}`;
 }
 
+/**
+ * The stretch of its source file that a timeline clip plays, in source seconds, so it can be saved as a clip.
+ * Speed changes how much source each timeline second covers, but a saved clip is the footage at normal speed.
+ * Null when less than the shortest clip is left.
+ */
+export function clipSourceRange(item: { in: number; duration: number; speed: number }, sourceDuration: number): { start: number; end: number } | null {
+  const ms = (v: number) => Math.round(v * 1000) / 1000;
+  const start = ms(clamp(item.in, 0, sourceDuration));
+  const end = ms(Math.min(sourceDuration, item.in + item.duration * item.speed));
+  return end - start < MIN_CLIP - 1e-6 ? null : { start, end };
+}
+
 /** "1m05s" style stamp for file names (colons aren't allowed in them). */
 export function timeStamp(s: number): string {
   const t = Math.round(s * 10) / 10;
