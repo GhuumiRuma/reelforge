@@ -6,11 +6,17 @@ A full video editor for content creators that runs on your phone. Edit, caption 
 
 ## Install it on your phone
 
-- **Android app (Samsung and other Android phones):** on the phone, open the [Latest Android app release](https://github.com/GhuumiRuma/reelforge/releases/tag/android-latest) and tap **ReelForge.apk**. Open the downloaded file and tap **Install**. The first time, Android asks you to allow installs from your browser (on Samsung: **Settings → Apps → Special access → Install unknown apps**). New versions install over the old one and keep your clips. Only the Android app can search and download from YouTube, or download from TikTok and Instagram.
+- **Android app (Samsung and other Android phones):** on the phone, open the [Latest Android app release](https://github.com/GhuumiRuma/reelforge/releases/tag/android-latest) and tap **ReelForge.apk**. Open the downloaded file and tap **Install**. The first time, Android asks you to allow installs from your browser (on Samsung: **Settings → Apps → Special access → Install unknown apps**). New versions install right over the old one and keep your projects and clips, so don't uninstall first (see [Updating the Android app](#updating-the-android-app)). Only the Android app can search and download from YouTube, or download from TikTok and Instagram.
 - **iPhone:** open the link in Safari, tap **Share**, then **Add to Home Screen**.
 - **Android, desktop or any browser:** open the link in Chrome, tap the **⋮** menu, then **Install app** (or **Add to Home screen**).
 
 After the first visit it works offline. Auto-captions download a speech model (about 65 MB) the first time you use them.
+
+## Updating the Android app
+
+Install the new **ReelForge.apk** right over the app you already have. Android shows **Update**, and your projects, clips and settings stay. **Don't uninstall first**: that deletes everything the app has stored. After an update, the app offers to [back up your work](#back-up-and-restore).
+
+If Android says **App not installed** because the app **conflicts with an existing package**, your copy of ReelForge comes from one of the first builds. Each of those was signed with a different key, so Android can't see the new app as an update of it, and they have no backup button. Save your finished videos to your camera roll, uninstall once (that deletes the projects stored in the app), then install the new version. Every build from here on installs over the one before it.
 
 ## What you can do
 
@@ -57,13 +63,39 @@ The clip keeps its own sound, so move the soundbite or mute the clip if you hear
 
 Saved pieces are the same clips as under **Clips** on the home screen, so you can use them in any project. A saved piece is the original footage between the clip's edges. Speed, filters, volume and other changes you made to the clip are not included, and the toast tells you when speed was left out.
 
+## Back up and restore
+
+Tap **Back up and restore** at the top of the home screen, next to Appearance.
+
+- **Save a backup** (**Download a backup** in a browser) writes one `.rfbackup` file with your projects and folders, the videos, photos and audio they use, your saved clips and your settings. The sheet shows how big it will be first, and with all your footage in it, it can be large. Turn off **Include videos, photos and clips** for a small file that has only your project layouts and settings.
+- In the Android app the file is saved to `Documents/ReelForge`. Tap **Share a copy** to send it to Google Drive, email or anywhere else, and keep a copy off the phone: a backup that lives only on the phone is lost along with it.
+- **Restore from a backup** shows what is in the file before it changes anything. A restore only adds: nothing already in the app is deleted, a project is replaced only when the backup's copy is newer, and a setting is filled in only when it is missing. Restoring the same file again changes nothing.
+- After an update, the Android app asks **Back up now** if it holds projects or clips and you haven't made a backup in the last 7 days.
+
+A backup is never uploaded. It isn't encrypted either, so anyone who has the file can open your projects.
+
 ## Privacy
 
-Projects, clips and media are stored in your browser's storage on this device and are never uploaded. Clearing the site's data or uninstalling the app deletes them, so save finished videos to your camera roll.
+Projects, clips and media are stored in your browser's storage on this device and are never uploaded. Clearing the site's data or uninstalling the app deletes them, so save finished videos to your camera roll and [make a backup](#back-up-and-restore) of anything you want to keep.
 
 ## Browser support
 
 ReelForge needs WebCodecs and WebGL2: iOS 17 or later (Safari), or a recent Chrome on Android. Desktop Chrome, Edge and Safari work too.
+
+## Download stats
+
+ReelForge counts how often the Android app is downloaded from the [Latest Android app release](https://github.com/GhuumiRuma/reelforge/releases/tag/android-latest).
+
+- **Total and daily:** the **Download stats** workflow (`.github/workflows/download-stats.yml`) runs every day just after midnight UTC, or whenever you start it from the Actions tab. It saves the running numbers on the [`download-stats` branch](https://github.com/GhuumiRuma/reelforge/tree/download-stats), whose README shows the total, yesterday, the last 7 and 30 days, a table of each day and a week-by-week history.
+- **Weekly report:** every Monday it opens a **Weekly downloads** issue for the week that just ended (Monday to Sunday): the week's total, each day's downloads, the best day, the average, the all-time total, and how the week compares with the one before. The issue is labeled `download-report` and assigned to the repository owner. Close it once you've read it, because deleting it makes the workflow post it again.
+- **On your computer:** `npm run downloads` prints the same numbers in the terminal and ends with the last finished week. Add `-- --days 30` for a longer daily list (1 to 90 days).
+
+Good to know:
+
+- Counting starts once this is merged to `main`, because GitHub runs scheduled workflows only from the default branch. Downloads of builds that were already replaced can't be recovered, so the total starts from what the current release has, and the first weekly report covers part of a week.
+- GitHub counts each release file, and `android.yml` replaces the release on every build, which would reset that count. So before it replaces the release, the workflow writes the running total into the new release's notes as a hidden `rf-banked-downloads` comment. Leave that comment in place if you edit the notes.
+- Days run from midnight to midnight UTC. GitHub counts every completed download, so repeat downloads and your own count too. A download that finishes in the few seconds while a release is being replaced may be missed.
+- GitHub pauses scheduled workflows in a public repository after 60 days without activity. If the daily numbers stop, enable the workflow again from the Actions tab.
 
 ## Development
 
@@ -72,6 +104,7 @@ npm install
 npm run dev      # dev server, reachable from your phone on the same Wi-Fi
 npm test         # unit tests
 npm run build    # type-check and production build into dist/
+npm run downloads        # download numbers for the Android app (see Download stats)
 node scripts/icons.mjs   # regenerate the app icons in public/
 ```
 
@@ -86,6 +119,15 @@ npm run build:android    # build the web app for the app and copy it into androi
 npx cap open android     # open in Android Studio to run it on a phone or emulator
 ```
 
-`.github/workflows/android.yml` builds `ReelForge.apk` on every push and uploads it as a workflow artifact. On `main` it also replaces the **android-latest** release. To sign with your own key, add the repository secrets `ANDROID_KEYSTORE_BASE64` (a base64 .jks file), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Without them, the workflow makes a key once and keeps it in the Actions cache. GitHub drops caches that go unused for 7 days, and a new key means you must uninstall the app (which deletes its clips) before you can install the next build, so add the secrets if you want to keep it long term.
+`.github/workflows/android.yml` builds `ReelForge.apk` on every push and uploads it as a workflow artifact. On `main` it also replaces the **android-latest** release.
+
+Android installs a new APK over an installed app only when both are signed with the same certificate. Otherwise it reports a package conflict, and the only way forward is to uninstall, which deletes the app's data. So every build is signed with one permanent key:
+
+- The repository secrets `ANDROID_KEYSTORE_BASE64` (a base64-encoded keystore), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` hold it, and `main` won't build a release without them.
+- `EXPECTED_CERT_SHA256` in `android.yml` is the fingerprint of the certificate that phones already have. The **Check the signature** step reads the certificate back out of the finished APK, lists it in the run summary, and fails the build if the secrets give a different one.
+- Keep a copy of the keystore and its passwords somewhere private, outside the repository (`.gitignore` already skips `*.jks`, `*.keystore` and `*.p12`). If the key is lost, the app can't be updated in place again.
+- To move to a new key on purpose, change the secrets and `EXPECTED_CERT_SHA256` together. Everyone who has the app will then have to uninstall once, so tell them to make a backup first.
+- A fork has no secrets, so its builds use a one-off key. That APK installs on a phone that has no ReelForge, but it can't update an installed copy.
+- `capacitor.config.ts` pins the app's origin to `https://localhost`. The browser engine files a page's storage under its origin, so a different one would hide everyone's projects after an update. The manifest sets `hasFragileUserData`, so Android 10 and later asks whether to keep the app's data when someone uninstalls it.
 
 Built with React, TypeScript, Vite, [Mediabunny](https://mediabunny.dev) (WebCodecs), WebGL2 and [Transformers.js](https://huggingface.co/docs/transformers.js) (Whisper).
