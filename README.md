@@ -131,3 +131,14 @@ Android installs a new APK over an installed app only when both are signed with 
 - `capacitor.config.ts` pins the app's origin to `https://localhost`. The browser engine files a page's storage under its origin, so a different one would hide everyone's projects after an update. The manifest sets `hasFragileUserData`, so Android 10 and later asks whether to keep the app's data when someone uninstalls it.
 
 Built with React, TypeScript, Vite, [Mediabunny](https://mediabunny.dev) (WebCodecs), WebGL2 and [Transformers.js](https://huggingface.co/docs/transformers.js) (Whisper).
+
+## License
+
+ReelForge is **source-available**, not open source. The [ReelForge License](LICENSE) lets you use, copy, modify and share it, with these limits:
+
+- **Don't sell it.** You can't sell ReelForge, or a product or service built on it, including hosting or support for a fee. Making and publishing videos with it is fine, even if you earn money from them.
+- **Don't use it to promote, encourage or carry out discrimination, harassment or violence** against people because of a protected characteristic, including gender identity and being transgender or nonbinary. Reporting on or criticizing discrimination is fine.
+- **Pass it on.** If you share ReelForge, keep the license and its notices with it, so the same terms reach everyone who gets a copy.
+- **Names.** The license doesn't cover the ReelForge name, logo or icons, except to say where the software came from.
+
+If this summary and the [LICENSE](LICENSE) differ, the LICENSE wins. The fonts, speech models and code libraries ReelForge uses keep their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
