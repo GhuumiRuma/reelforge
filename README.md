@@ -37,7 +37,7 @@ If Android says **App not installed** because the app **conflicts with an existi
   - **Accent color:** one of 15 swatches (Pink, Red, Orange, Amber, Lime, Green, Mint, Teal, Sky, Blue, Indigo, Violet, Magenta, Copper or Graphite), or any color of your own with the color picker. Where a color would make text hard to read, it is adjusted a little for you.
   - **Corners:** Sharp, Standard or Round.
 
-  A live preview at the top of the sheet shows each change, and **Reset to default** brings back the original look. Your choices are saved on the device, apply everywhere (including the timeline) and are used again the next time you open the app. If you never change anything, nothing is saved.
+  A live preview at the top of the sheet shows each change, and **Reset to default** brings back the original look. Your choices are saved on the device, apply everywhere (including the timeline) and are used again the next time you open the app. If you never change anything, nothing is saved. A [backup](#back-up-and-restore) includes these choices, and restoring it on a new install brings them back.
 
 ## Clip studio
 
