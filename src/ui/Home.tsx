@@ -14,6 +14,7 @@ import { setPendingImport } from './actions';
 import { ClipsLibrary } from './Clips';
 import { Progress, Segmented } from './common';
 import { confirmDialog, menuDialog, promptDialog } from './dialog';
+import { ThemeButton } from './ThemeButton';
 
 const INSTALL_HINT_KEY = 'rf-install-hint';
 const TAB_KEY = 'rf-home-tab';
@@ -79,6 +80,7 @@ export function Home() {
           <Clapperboard size={26} aria-hidden />
           ReelForge
         </h1>
+        <ThemeButton />
       </header>
 
       <UpdateNotice />

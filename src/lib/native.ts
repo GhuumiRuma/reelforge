@@ -2,10 +2,19 @@
  * Glue for the Android app (Capacitor). In a browser every function here falls back to the web
  * behavior, so the same build runs everywhere.
  */
-import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { Capacitor, CapacitorHttp, SystemBars, SystemBarsStyle } from '@capacitor/core';
 import type { SocialNet } from './social';
 
 export const isNative = (): boolean => Capacitor.isNativePlatform();
+
+/**
+ * Colors the status and navigation bar icons for the app's theme: light icons over the dark app,
+ * dark icons over the light one. Left alone they follow the phone's own setting, which can disagree.
+ */
+export async function nativeSystemBars(theme: 'light' | 'dark'): Promise<void> {
+  if (!isNative()) return;
+  await SystemBars.setStyle({ style: theme === 'light' ? SystemBarsStyle.Light : SystemBarsStyle.Dark });
+}
 
 function toBase64(bytes: Uint8Array): string {
   let s = '';

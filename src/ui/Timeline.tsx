@@ -9,7 +9,10 @@ import { ensurePeaks, ensureThumbs, getAsset, getPeaksSync, getThumbStrip, media
 import { clamp, formatTime } from '../lib/util';
 import { duration, getEngine, now, pause, seek } from '../state/runtime';
 import { useEditor, useTime } from '../state/store';
+import { useTheme } from '../state/theme';
 import { addText, importAndInsert } from './actions';
+import { TIMELINE_PALETTES } from './timelineTheme';
+import type { TimelinePalette } from './timelineTheme';
 
 const RULER_H = 24;
 const MAIN_TOP = 30;
@@ -27,17 +30,7 @@ const MARKER = 20;
 const STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
 const MINOR: Record<number, number> = { 1: 4, 2: 4, 5: 5, 10: 5, 15: 3, 30: 3, 60: 4, 120: 4, 300: 5, 600: 4 };
 
-const ACCENT = '#ff3d6e';
-const DIM = '#9a9aa8';
-const RAISED = '#1d1d26';
 const FONT = "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-const TEXT_TINT = { fill: '#3a2a12', ink: '#ffd89a' };
-const AUDIO_TINT: Record<AudioItem['role'], { fill: string; ink: string; wave: string }> = {
-  music: { fill: '#12304a', ink: '#a9d8ff', wave: '#3f9cff' },
-  voice: { fill: '#0f3a2b', ink: '#9ff0c8', wave: '#33c98a' },
-  sfx: { fill: '#33204a', ink: '#dcc2ff', wave: '#a67cff' },
-  extracted: { fill: '#2c2c3a', ink: '#d0d0e0', wave: '#8d8da3' },
-};
 
 type FreeKind = 'overlays' | 'texts' | 'audios';
 interface Row {
@@ -183,6 +176,7 @@ export function Timeline() {
     const s = useEditor.getState();
     const p = s.project;
     if (!p) return;
+    const pal = TIMELINE_PALETTES[useTheme.getState().theme];
     const time = useTime.getState().time;
     const zoom = s.zoom;
     const X = (t: number) => W / 2 + (t - time) * zoom;
@@ -213,7 +207,7 @@ export function Timeline() {
       const y = row.y - vs;
       if (y > H || y + LANE_H < MAIN_TOP + MAIN_H) continue;
       if (row.hint) {
-        drawHint(ctx, W / 2 + 10, y, row.hint === 'text' ? 'Add text' : 'Add audio');
+        drawHint(ctx, pal, W / 2 + 10, y, row.hint === 'text' ? 'Add text' : 'Add audio');
         continue;
       }
       for (const it of p[row.kind] as Item[]) {
@@ -221,18 +215,18 @@ export function Timeline() {
         const x0 = X(it.start);
         const x1 = X(itemEnd(it));
         if (x1 < -HANDLE_W || x0 > W + HANDLE_W) continue;
-        drawFree(ctx, it, x0, x1, y, W, time, zoom);
+        drawFree(ctx, pal, it, x0, x1, y, W, time, zoom);
         if (it.id === sel) selFree = { it, l: x0, r: x1, y };
       }
     }
     if (selFree) {
-      drawSelection(ctx, selFree.l + 1, selFree.r - 1, selFree.y, LANE_H);
-      if (isVisual(selFree.it)) drawKeyframes(ctx, selFree.it.keyframes, selFree.it.start, selFree.y + LANE_H / 2, X, time, p.fps);
+      drawSelection(ctx, pal, selFree.l + 1, selFree.r - 1, selFree.y, LANE_H);
+      if (isVisual(selFree.it)) drawKeyframes(ctx, pal, selFree.it.keyframes, selFree.it.start, selFree.y + LANE_H / 2, X, time, p.fps);
     }
     ctx.restore();
 
     // ---- ruler
-    drawRuler(ctx, W, time, zoom, X);
+    drawRuler(ctx, pal, W, time, zoom, X);
 
     // ---- main track
     const trimming = g?.mode === 'trim' && g.kind === 'main';
@@ -245,22 +239,22 @@ export function Timeline() {
       if (sp.it.id === sel) selMain = sp;
       if (x1 < -HANDLE_W || x0 > W + HANDLE_W) continue;
       if (sp.it.id === reorderId) ctx.globalAlpha = 0.3;
-      drawMainClip(ctx, sp, x0, x1, W, zoom, X);
+      drawMainClip(ctx, pal, sp, x0, x1, W, zoom, X);
       ctx.globalAlpha = 1;
     }
-    if (!reorderId) for (const m of markers(spans, X, sel)) drawMarker(ctx, m.x, m.on);
+    if (!reorderId) for (const m of markers(spans, X, sel)) drawMarker(ctx, pal, m.x, m.on);
     if (selMain && !reorderId) {
       const l = X(selMain.s) + 1;
       const r = X(selMain.e) - 1;
-      drawSelection(ctx, l, r, MAIN_TOP, MAIN_H);
-      drawKeyframes(ctx, selMain.it.keyframes, selMain.it.start + selMain.shift, MAIN_TOP + MAIN_H - 9, X, time, p.fps);
+      drawSelection(ctx, pal, l, r, MAIN_TOP, MAIN_H);
+      drawKeyframes(ctx, pal, selMain.it.keyframes, selMain.it.start + selMain.shift, MAIN_TOP + MAIN_H - 9, X, time, p.fps);
     }
-    if (reorderId && g) drawReorder(ctx, spans, g, X);
+    if (reorderId && g) drawReorder(ctx, pal, spans, g, X);
 
     // ---- playhead
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fillStyle = pal.playheadHalo;
     ctx.fillRect(W / 2 - 2, 0, 4, H);
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = pal.playhead;
     ctx.fillRect(W / 2 - 1, 0, 2, H);
   };
 
@@ -757,6 +751,9 @@ export function Timeline() {
     const unsubE = useEditor.subscribe((s, prev) => {
       if (s.project !== prev.project || s.selectedId !== prev.selectedId || s.zoom !== prev.zoom) requestDraw();
     });
+    const unsubTheme = useTheme.subscribe((s, prev) => {
+      if (s.theme !== prev.theme) requestDraw();
+    });
     const onMedia = () => requestDraw();
     mediaEvents.addEventListener('update', onMedia);
     const onWheel = (e: WheelEvent) => {
@@ -788,6 +785,7 @@ export function Timeline() {
       ro.disconnect();
       unsubT();
       unsubE();
+      unsubTheme();
       mediaEvents.removeEventListener('update', onMedia);
       cv.removeEventListener('wheel', onWheel);
       cancelAnimationFrame(rafRef.current);
@@ -848,13 +846,13 @@ function hintWidth(hint: 'text' | 'audio') {
   return hint === 'text' ? 104 : 112;
 }
 
-function drawHint(ctx: CanvasRenderingContext2D, x: number, y: number, label: string) {
+function drawHint(ctx: CanvasRenderingContext2D, pal: TimelinePalette, x: number, y: number, label: string) {
   const w = label === 'Add text' ? hintWidth('text') : hintWidth('audio');
-  ctx.fillStyle = RAISED;
+  ctx.fillStyle = pal.raised;
   ctx.beginPath();
   ctx.roundRect(x, y, w, LANE_H, 6);
   ctx.fill();
-  ctx.fillStyle = DIM;
+  ctx.fillStyle = pal.dim;
   const cx = x + 16;
   const cy = y + LANE_H / 2;
   ctx.fillRect(cx - 6, cy - 1, 12, 2);
@@ -864,7 +862,7 @@ function drawHint(ctx: CanvasRenderingContext2D, x: number, y: number, label: st
   ctx.fillText(label, x + 30, cy + 0.5);
 }
 
-function drawRuler(ctx: CanvasRenderingContext2D, W: number, time: number, zoom: number, X: (t: number) => number) {
+function drawRuler(ctx: CanvasRenderingContext2D, pal: TimelinePalette, W: number, time: number, zoom: number, X: (t: number) => number) {
   const step = STEPS.find((s) => s * zoom >= 64) ?? STEPS[STEPS.length - 1];
   const n = MINOR[step];
   const minor = step / n;
@@ -872,13 +870,13 @@ function drawRuler(ctx: CanvasRenderingContext2D, W: number, time: number, zoom:
   const tR = time + W / 2 / zoom;
   const cy = RULER_H / 2;
   if (minor * zoom >= 8) {
-    ctx.fillStyle = '#4a4a58';
+    ctx.fillStyle = pal.tick;
     for (let i = Math.max(0, Math.ceil(tL / minor)); i * minor <= tR; i++) {
       if (i % n === 0) continue;
       ctx.fillRect(Math.round(X(i * minor)) - 1, cy - 1, 2, 2);
     }
   }
-  ctx.fillStyle = DIM;
+  ctx.fillStyle = pal.dim;
   ctx.font = `500 10px ${FONT}`;
   ctx.textAlign = 'center';
   for (let i = Math.max(0, Math.floor(tL / step)); i * step <= tR + step; i++) {
@@ -930,7 +928,16 @@ function drawThumbs(
   }
 }
 
-function drawMainClip(ctx: CanvasRenderingContext2D, sp: Span, x0: number, x1: number, W: number, zoom: number, X: (t: number) => number) {
+function drawMainClip(
+  ctx: CanvasRenderingContext2D,
+  pal: TimelinePalette,
+  sp: Span,
+  x0: number,
+  x1: number,
+  W: number,
+  zoom: number,
+  X: (t: number) => number,
+) {
   const it = sp.it;
   const l = x0 + 1;
   const r = x1 - 1;
@@ -940,7 +947,7 @@ function drawMainClip(ctx: CanvasRenderingContext2D, sp: Span, x0: number, x1: n
   ctx.beginPath();
   ctx.roundRect(l, MAIN_TOP, w, MAIN_H, 6);
   ctx.clip();
-  ctx.fillStyle = it.type === 'color' ? it.color : RAISED;
+  ctx.fillStyle = it.type === 'color' ? it.color : pal.raised;
   ctx.fillRect(l, MAIN_TOP, w, MAIN_H);
   if (it.type !== 'color') drawThumbs(ctx, it, X(it.start + sp.shift), l, r, MAIN_TOP, MAIN_H, W, zoom);
   if (w > 44) {
@@ -964,7 +971,17 @@ function drawMainClip(ctx: CanvasRenderingContext2D, sp: Span, x0: number, x1: n
   ctx.restore();
 }
 
-function drawFree(ctx: CanvasRenderingContext2D, it: Item, x0: number, x1: number, y: number, W: number, time: number, zoom: number) {
+function drawFree(
+  ctx: CanvasRenderingContext2D,
+  pal: TimelinePalette,
+  it: Item,
+  x0: number,
+  x1: number,
+  y: number,
+  W: number,
+  time: number,
+  zoom: number,
+) {
   const l = x0 + 1;
   const r = x1 - 1;
   const w = r - l;
@@ -977,9 +994,9 @@ function drawFree(ctx: CanvasRenderingContext2D, it: Item, x0: number, x1: numbe
   const room = r - labelX - 4;
   ctx.textAlign = 'left';
   if (it.type === 'text') {
-    drawTextClip(ctx, it, l, w, y, labelX, room);
+    drawTextClip(ctx, pal, it, l, w, y, labelX, room);
   } else if (it.type === 'audio') {
-    const tint = AUDIO_TINT[it.role];
+    const tint = pal.audio[it.role];
     ctx.fillStyle = tint.fill;
     ctx.fillRect(l, y, w, LANE_H);
     drawWave(ctx, it, l, r, y, W, time, zoom, tint.wave);
@@ -988,20 +1005,29 @@ function drawFree(ctx: CanvasRenderingContext2D, it: Item, x0: number, x1: numbe
     const name = it.muted ? `${it.name} · Muted` : it.name;
     ctx.fillText(fitText(ctx, name, room), labelX, y + 8);
   } else {
-    ctx.fillStyle = it.type === 'color' ? it.color : RAISED;
+    ctx.fillStyle = it.type === 'color' ? it.color : pal.raised;
     ctx.fillRect(l, y, w, LANE_H);
     if (it.type !== 'color') drawThumbs(ctx, it, x0, l, r, y, LANE_H, W, zoom);
   }
   ctx.restore();
 }
 
-function drawTextClip(ctx: CanvasRenderingContext2D, it: TextItem, l: number, w: number, y: number, labelX: number, room: number) {
-  ctx.fillStyle = TEXT_TINT.fill;
+function drawTextClip(
+  ctx: CanvasRenderingContext2D,
+  pal: TimelinePalette,
+  it: TextItem,
+  l: number,
+  w: number,
+  y: number,
+  labelX: number,
+  room: number,
+) {
+  ctx.fillStyle = pal.text.fill;
   ctx.fillRect(l, y, w, LANE_H);
-  ctx.fillStyle = TEXT_TINT.ink;
+  ctx.fillStyle = pal.text.ink;
   let x = labelX;
   if (it.caption && room > 26) {
-    ctx.strokeStyle = TEXT_TINT.ink;
+    ctx.strokeStyle = pal.text.ink;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.roundRect(x + 0.5, y + 8.5, 20, 13, 3);
@@ -1058,13 +1084,13 @@ function drawWave(
   }
 }
 
-function drawSelection(ctx: CanvasRenderingContext2D, l: number, r: number, y: number, h: number) {
-  ctx.strokeStyle = ACCENT;
+function drawSelection(ctx: CanvasRenderingContext2D, pal: TimelinePalette, l: number, r: number, y: number, h: number) {
+  ctx.strokeStyle = pal.accent;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.roundRect(l, y - 1, Math.max(0, r - l), h + 2, 5);
   ctx.stroke();
-  ctx.fillStyle = ACCENT;
+  ctx.fillStyle = pal.accent;
   ctx.beginPath();
   ctx.roundRect(l - HANDLE_W, y - 2, HANDLE_W, h + 4, [6, 0, 0, 6]);
   ctx.roundRect(r, y - 2, HANDLE_W, h + 4, [0, 6, 6, 0]);
@@ -1079,6 +1105,7 @@ function drawSelection(ctx: CanvasRenderingContext2D, l: number, r: number, y: n
 
 function drawKeyframes(
   ctx: CanvasRenderingContext2D,
+  pal: TimelinePalette,
   kfs: { t: number }[],
   start: number,
   cy: number,
@@ -1095,7 +1122,7 @@ function drawKeyframes(
     ctx.lineTo(x, cy + 5);
     ctx.lineTo(x - 5, cy);
     ctx.closePath();
-    ctx.fillStyle = on ? ACCENT : '#fff';
+    ctx.fillStyle = on ? pal.accent : '#fff';
     ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.lineWidth = 1;
     ctx.fill();
@@ -1103,17 +1130,18 @@ function drawKeyframes(
   }
 }
 
-function drawMarker(ctx: CanvasRenderingContext2D, x: number, on: boolean) {
+function drawMarker(ctx: CanvasRenderingContext2D, pal: TimelinePalette, x: number, on: boolean) {
+  const m = pal.marker;
   const cy = MAIN_TOP + MAIN_H / 2;
   const h = MARKER / 2;
   ctx.beginPath();
   ctx.roundRect(x - h, cy - h, MARKER, MARKER, 5);
-  ctx.fillStyle = on ? '#fff' : '#262632';
+  ctx.fillStyle = on ? m.onFill : m.fill;
   ctx.fill();
-  ctx.strokeStyle = on ? '#fff' : '#4a4a58';
+  ctx.strokeStyle = on ? m.onFill : m.stroke;
   ctx.lineWidth = 1;
   ctx.stroke();
-  ctx.fillStyle = on ? '#16161d' : '#fff';
+  ctx.fillStyle = on ? m.onInk : m.ink;
   if (on) {
     // bow-tie: a transition is set
     ctx.beginPath();
@@ -1131,7 +1159,7 @@ function drawMarker(ctx: CanvasRenderingContext2D, x: number, on: boolean) {
   }
 }
 
-function drawReorder(ctx: CanvasRenderingContext2D, spans: Span[], g: Gesture, X: (t: number) => number) {
+function drawReorder(ctx: CanvasRenderingContext2D, pal: TimelinePalette, spans: Span[], g: Gesture, X: (t: number) => number) {
   const cur = spans.findIndex((sp) => sp.it.id === g.id);
   if (cur < 0) return;
   const others = spans.filter((sp) => sp.it.id !== g.id);
@@ -1139,7 +1167,7 @@ function drawReorder(ctx: CanvasRenderingContext2D, spans: Span[], g: Gesture, X
   if (g.toIndex === cur || !others.length) lx = X(spans[cur].s);
   else if (g.toIndex >= others.length) lx = X(others[others.length - 1].e);
   else lx = X(others[g.toIndex].s);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = pal.drop;
   ctx.beginPath();
   ctx.roundRect(lx - 1.5, MAIN_TOP - 6, 3, MAIN_H + 12, 1.5);
   ctx.fill();
@@ -1149,11 +1177,11 @@ function drawReorder(ctx: CanvasRenderingContext2D, spans: Span[], g: Gesture, X
   const gx = g.x - w / 2;
   const gy = MAIN_TOP - 8;
   ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+  ctx.shadowColor = pal.dropShadow;
   ctx.shadowBlur = 12;
   ctx.beginPath();
   ctx.roundRect(gx, gy, w, MAIN_H, 8);
-  ctx.fillStyle = it.type === 'color' ? it.color : RAISED;
+  ctx.fillStyle = it.type === 'color' ? it.color : pal.raised;
   ctx.fill();
   ctx.restore();
   ctx.save();
@@ -1166,7 +1194,7 @@ function drawReorder(ctx: CanvasRenderingContext2D, spans: Span[], g: Gesture, X
     if (img) ctx.drawImage(img, gx + (w - MAIN_H) / 2, gy, MAIN_H, MAIN_H);
   }
   ctx.restore();
-  ctx.strokeStyle = '#fff';
+  ctx.strokeStyle = pal.drop;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.roundRect(gx, gy, w, MAIN_H, 8);

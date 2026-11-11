@@ -37,6 +37,7 @@ Everything happens on the phone: editing, speech-to-text captions and encoding a
 - Name: ReelForge (confirmed).
 - Free, private, no watermark.
 - Visual direction (user choice): the category standard, played straight. A dark InShot/CapCut-style mobile editor with one bright pink accent, held to the craft level of InShot and CapCut. Do not swap it for a novel visual world without asking.
+- Themes (user choice): dark is the signature look and a light theme sits beside it, with the same layout and the same pink accent. The app follows the system setting unless the creator picks Light or Dark under Appearance on the home screen. Keep both themes at the same craft level, and give any new color a token for each.
 
 ## Evidence on Hand
 
