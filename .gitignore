@@ -3,5 +3,10 @@ dist/
 coverage/
 .impeccable/
 *.log
+# Signing keys and backups hold secrets or personal media; they never belong in the repository.
+*.jks
+*.keystore
+*.p12
+*.rfbackup
 .DS_Store
 Thumbs.db
