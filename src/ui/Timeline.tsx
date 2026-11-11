@@ -11,7 +11,7 @@ import { duration, getEngine, now, pause, seek } from '../state/runtime';
 import { useEditor, useTime } from '../state/store';
 import { useTheme } from '../state/theme';
 import { addText, importAndInsert } from './actions';
-import { TIMELINE_PALETTES } from './timelineTheme';
+import { timelinePalette } from './timelineTheme';
 import type { TimelinePalette } from './timelineTheme';
 
 const RULER_H = 24;
@@ -176,7 +176,8 @@ export function Timeline() {
     const s = useEditor.getState();
     const p = s.project;
     if (!p) return;
-    const pal = TIMELINE_PALETTES[useTheme.getState().theme];
+    const { theme, look } = useTheme.getState();
+    const pal = timelinePalette(theme, look);
     const time = useTime.getState().time;
     const zoom = s.zoom;
     const X = (t: number) => W / 2 + (t - time) * zoom;
@@ -752,7 +753,7 @@ export function Timeline() {
       if (s.project !== prev.project || s.selectedId !== prev.selectedId || s.zoom !== prev.zoom) requestDraw();
     });
     const unsubTheme = useTheme.subscribe((s, prev) => {
-      if (s.theme !== prev.theme) requestDraw();
+      if (s.theme !== prev.theme || s.look !== prev.look) requestDraw();
     });
     const onMedia = () => requestDraw();
     mediaEvents.addEventListener('update', onMedia);
@@ -846,11 +847,14 @@ function hintWidth(hint: 'text' | 'audio') {
   return hint === 'text' ? 104 : 112;
 }
 
+/** A corner radius scaled by the Corners setting, as styles.css does from 6px up. The small ones stay crisp. */
+const rad = (pal: TimelinePalette, r: number): number => (r >= 5 ? r * pal.rs : r);
+
 function drawHint(ctx: CanvasRenderingContext2D, pal: TimelinePalette, x: number, y: number, label: string) {
   const w = label === 'Add text' ? hintWidth('text') : hintWidth('audio');
   ctx.fillStyle = pal.raised;
   ctx.beginPath();
-  ctx.roundRect(x, y, w, LANE_H, 6);
+  ctx.roundRect(x, y, w, LANE_H, rad(pal, 6));
   ctx.fill();
   ctx.fillStyle = pal.dim;
   const cx = x + 16;
@@ -945,7 +949,7 @@ function drawMainClip(
   if (w <= 0) return;
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(l, MAIN_TOP, w, MAIN_H, 6);
+  ctx.roundRect(l, MAIN_TOP, w, MAIN_H, rad(pal, 6));
   ctx.clip();
   ctx.fillStyle = it.type === 'color' ? it.color : pal.raised;
   ctx.fillRect(l, MAIN_TOP, w, MAIN_H);
@@ -988,7 +992,7 @@ function drawFree(
   if (w <= 0) return;
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(l, y, w, LANE_H, 5);
+  ctx.roundRect(l, y, w, LANE_H, rad(pal, 5));
   ctx.clip();
   const labelX = Math.max(l, 0) + 6;
   const room = r - labelX - 4;
@@ -1088,14 +1092,15 @@ function drawSelection(ctx: CanvasRenderingContext2D, pal: TimelinePalette, l: n
   ctx.strokeStyle = pal.accent;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.roundRect(l, y - 1, Math.max(0, r - l), h + 2, 5);
+  ctx.roundRect(l, y - 1, Math.max(0, r - l), h + 2, rad(pal, 5));
   ctx.stroke();
   ctx.fillStyle = pal.accent;
   ctx.beginPath();
-  ctx.roundRect(l - HANDLE_W, y - 2, HANDLE_W, h + 4, [6, 0, 0, 6]);
-  ctx.roundRect(r, y - 2, HANDLE_W, h + 4, [0, 6, 6, 0]);
+  const hr = rad(pal, 6);
+  ctx.roundRect(l - HANDLE_W, y - 2, HANDLE_W, h + 4, [hr, 0, 0, hr]);
+  ctx.roundRect(r, y - 2, HANDLE_W, h + 4, [0, hr, hr, 0]);
   ctx.fill();
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = pal.grip;
   const gh = Math.min(16, h * 0.5);
   ctx.beginPath();
   ctx.roundRect(l - HANDLE_W / 2 - 1, y + h / 2 - gh / 2, 2, gh, 1);
@@ -1135,7 +1140,7 @@ function drawMarker(ctx: CanvasRenderingContext2D, pal: TimelinePalette, x: numb
   const cy = MAIN_TOP + MAIN_H / 2;
   const h = MARKER / 2;
   ctx.beginPath();
-  ctx.roundRect(x - h, cy - h, MARKER, MARKER, 5);
+  ctx.roundRect(x - h, cy - h, MARKER, MARKER, rad(pal, 5));
   ctx.fillStyle = on ? m.onFill : m.fill;
   ctx.fill();
   ctx.strokeStyle = on ? m.onFill : m.stroke;
@@ -1176,17 +1181,18 @@ function drawReorder(ctx: CanvasRenderingContext2D, pal: TimelinePalette, spans:
   const w = 64;
   const gx = g.x - w / 2;
   const gy = MAIN_TOP - 8;
+  const gr = rad(pal, 8);
   ctx.save();
   ctx.shadowColor = pal.dropShadow;
   ctx.shadowBlur = 12;
   ctx.beginPath();
-  ctx.roundRect(gx, gy, w, MAIN_H, 8);
+  ctx.roundRect(gx, gy, w, MAIN_H, gr);
   ctx.fillStyle = it.type === 'color' ? it.color : pal.raised;
   ctx.fill();
   ctx.restore();
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(gx, gy, w, MAIN_H, 8);
+  ctx.roundRect(gx, gy, w, MAIN_H, gr);
   ctx.clip();
   if (it.type !== 'color') {
     const strip = getThumbStrip(it.mediaId);
@@ -1197,6 +1203,6 @@ function drawReorder(ctx: CanvasRenderingContext2D, pal: TimelinePalette, spans:
   ctx.strokeStyle = pal.drop;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.roundRect(gx, gy, w, MAIN_H, 8);
+  ctx.roundRect(gx, gy, w, MAIN_H, gr);
   ctx.stroke();
 }

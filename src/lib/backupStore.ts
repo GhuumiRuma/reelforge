@@ -2,7 +2,8 @@
  * The app's own storage as a backup sees it: IndexedDB for projects, files and clips, localStorage for
  * the few preferences worth carrying over. `backup.ts` only knows the `BackupStore` shape.
  */
-import { parsePref, setThemePref, THEME_KEY } from '../state/theme';
+import { parseLook } from '../state/appearance';
+import { LOOK_KEY, parsePref, setLook, setThemePref, THEME_KEY } from '../state/theme';
 import type { BackupStore } from './backup';
 import {
   getClip,
@@ -27,9 +28,14 @@ export const appStore: BackupStore = {
     }
   },
   async setSetting(key, value) {
-    // The theme also has to be applied now, not just saved for the next launch.
+    // The theme and the look also have to be applied now, not just saved for the next launch. The look is
+    // rebuilt from its choices, never copied: index.html applies the CSS saved with a look as it is.
     if (key === THEME_KEY) {
       setThemePref(parsePref(value));
+      return;
+    }
+    if (key === LOOK_KEY) {
+      setLook(parseLook(value));
       return;
     }
     try {

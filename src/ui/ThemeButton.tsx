@@ -1,31 +1,19 @@
-import { MonitorSmartphone, Moon, Sun, SunMoon } from 'lucide-react';
-import type { ReactNode } from 'react';
-import { setThemePref, useTheme } from '../state/theme';
-import type { ThemePref } from '../state/theme';
-import { menuDialog } from './dialog';
+import { Palette } from 'lucide-react';
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AppearanceSheet } from './AppearanceSheet';
 
-const OPTIONS: { value: ThemePref; label: string; icon: ReactNode }[] = [
-  { value: 'system', label: 'System default', icon: <MonitorSmartphone size={20} /> },
-  { value: 'light', label: 'Light', icon: <Sun size={20} /> },
-  { value: 'dark', label: 'Dark', icon: <Moon size={20} /> },
-];
-
-/** Opens the Appearance menu: follow the device, or stay light or dark. */
+/** Opens the Appearance sheet: mode, style, accent color and corners. */
 export function ThemeButton() {
-  const pref = useTheme((s) => s.pref);
-
-  const choose = async () => {
-    const choice = await menuDialog({
-      title: 'Appearance',
-      items: OPTIONS.map((o) => ({ id: o.value, label: o.label, icon: o.icon, checked: o.value === pref })),
-    });
-    const next = OPTIONS.find((o) => o.value === choice);
-    if (next) setThemePref(next.value);
-  };
+  const [open, setOpen] = useState(false);
 
   return (
-    <button className="icon-btn" aria-label="Appearance" onClick={() => void choose()}>
-      <SunMoon size={22} />
-    </button>
+    <>
+      <button className="icon-btn" aria-label="Appearance" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <Palette size={22} />
+      </button>
+      {/* Outside the page, so the page's own heading styles don't reach the sheet's title. */}
+      {open && createPortal(<AppearanceSheet onClose={() => setOpen(false)} />, document.body)}
+    </>
   );
 }

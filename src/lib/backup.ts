@@ -23,7 +23,7 @@ export const BACKUP_EXTENSION = '.rfbackup';
 export const BACKUP_MIME = 'application/octet-stream';
 
 /** Preferences kept in localStorage that are worth carrying over to another install. */
-export const SETTING_KEYS = ['rf-theme', 'rf-text-style', 'rf-studio', 'rf-export', 'rf-captions'] as const;
+export const SETTING_KEYS = ['rf-theme', 'rf-look', 'rf-text-style', 'rf-studio', 'rf-export', 'rf-captions'] as const;
 
 const MAGIC = new TextEncoder().encode('RFBACKUP');
 const FORMAT = 1;

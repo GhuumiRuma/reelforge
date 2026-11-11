@@ -30,14 +30,17 @@ Everything happens on the phone: editing, speech-to-text captions and encoding a
 - Built as a PWA (React, WebCodecs via Mediabunny, WebGL2 compositing), hosted on GitHub Pages at `/reelforge/`.
 - Projects and media are stored in the browser's IndexedDB on the device; clearing site data deletes them.
 - iOS Safari limits: no background export, memory ceilings on long or 4K exports, and some codecs depend on OS version.
+- Appearance reaches the app's own screens only. The app icon, the Android launcher and splash screen, the installed web app's frame and splash color (the PWA manifest) and the Android WebView's background before the page loads stay dark (`#0b0b0f`), and the Android status and navigation bar icons follow Light or Dark but not the Style or Accent. The iOS standalone status-bar strip and the Android bars have not been tested on a real device.
 - Terminology follows creator editors: clip, split, trim, speed, volume, canvas, overlay, captions, transitions, keyframes, export.
 
 ## Brand Commitments
 
 - Name: ReelForge (confirmed).
 - Free, private, no watermark.
-- Visual direction (user choice): the category standard, played straight. A dark InShot/CapCut-style mobile editor with one bright pink accent, held to the craft level of InShot and CapCut. Do not swap it for a novel visual world without asking.
-- Themes (user choice): dark is the signature look and a light theme sits beside it, with the same layout and the same pink accent. The app follows the system setting unless the creator picks Light or Dark under Appearance on the home screen. Keep both themes at the same craft level, and give any new color a token for each.
+- Visual direction (user choice): the category standard, played straight. A dark InShot/CapCut-style mobile editor with one bright accent, pink by default, held to the craft level of InShot and CapCut. Do not swap it for a novel visual world without asking.
+- Themes (user choice): dark is the signature look and a light theme sits beside it, with the same layout and, by default, the same pink accent. The app follows the system setting unless the creator picks Light or Dark under Appearance on the home screen. Keep both themes at the same craft level, and give any new color a token for each.
+- Appearance options (user choice): under Appearance on the home screen the creator can also set the Style (Standard, Pure, Warm, Slate, High contrast), the Accent (15 swatches or a custom color) and the Corners (Sharp, Standard, Round), with a live preview and Reset to default. The defaults are System, Standard, pink and Standard corners: with nothing chosen the app looks as it always has and stores nothing. The layout never changes with these options, and every Style and accent is held to the same craft level in both themes.
+- Appearance safety: text stays readable under every option. Built-in options keep text, dim text and accent text at 4.5:1 or better on the surfaces they sit on, and a custom accent is always adjusted (hue kept, lightness moved) instead of applied raw. Errors and destructive actions stay red whatever the accent, and anything drawn over video stays legible under every Style. When adding UI, give any new color a token for each theme and Style, and write any corner radius of 5px or more as `calc(Npx * var(--rs))` so Corners can scale it.
 
 ## Evidence on Hand
 

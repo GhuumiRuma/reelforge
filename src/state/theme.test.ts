@@ -1,21 +1,9 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { contrast } from '../test/contrast';
+import { declarations } from '../test/css';
 import { DEFAULT_PREF, parsePref, resolveTheme, THEME_COLORS } from './theme';
 
-// Vitest blanks CSS imports, so read the stylesheet as plain text.
-const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 const LIGHT = ":root[data-theme='light']";
-
-/** The declarations in the rule whose selector is exactly `selector`. */
-function declarations(selector: string): Record<string, string> {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const rule = new RegExp(`^${escaped} \\{([^}]*)\\}`, 'm').exec(css.replace(/\/\*[\s\S]*?\*\//g, ''));
-  if (!rule) throw new Error(`No rule for ${selector}`);
-  const out: Record<string, string> = {};
-  for (const m of rule[1].matchAll(/([\w-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim();
-  return out;
-}
 
 const dark = declarations(':root');
 const lightOverrides = declarations(LIGHT);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { THEME_KEY } from '../state/theme';
+import { serializeLook } from '../state/appearance';
+import { LOOK_KEY, THEME_KEY } from '../state/theme';
 import type { ClipFolder, ClipMeta, MediaAsset, Project } from '../types';
 import {
   BACKUP_EXTENSION,
@@ -141,6 +142,9 @@ function seeded(): FakeStore {
   return s;
 }
 
+/** A look as the app saves it, with the CSS and page colors that go with it. */
+const SAVED_LOOK = serializeLook({ style: 'slate', accent: '#00b2ff', corners: 'round' });
+
 async function backUp(store: BackupStore, files = true) {
   const sink = new BlobSink();
   const summary = await writeBackup(store, sink, { files, build: 'test' });
@@ -213,6 +217,17 @@ describe('writing a backup', () => {
 
   it('includes the theme setting', () => {
     expect(SETTING_KEYS).toContain(THEME_KEY);
+  });
+
+  it('includes the look setting', () => {
+    expect(SETTING_KEYS).toContain(LOOK_KEY);
+  });
+
+  it('backs up a saved look exactly as it is stored', async () => {
+    const s = seeded();
+    s.settings.set(LOOK_KEY, SAVED_LOOK);
+    const opened = await openBackup((await backUp(s)).blob);
+    expect(opened.index.settings[LOOK_KEY]).toBe(SAVED_LOOK);
   });
 
   it('reports progress that never goes backwards and ends at 1', async () => {
@@ -389,6 +404,42 @@ describe('restoring a backup', () => {
     expect(sum.settings).toBe(1);
   });
 
+  it('brings back a saved look exactly, and counts it with the other settings', async () => {
+    const src = seeded();
+    src.settings.set(LOOK_KEY, SAVED_LOOK);
+    const opened = await openBackup((await backUp(src)).blob);
+
+    const dst = new FakeStore();
+    const sum = await restoreBackup(opened, dst);
+
+    expect(dst.settings.get(LOOK_KEY)).toBe(SAVED_LOOK);
+    expect(sum.settings).toBe(3);
+  });
+
+  it('leaves a look that is already on the phone alone', async () => {
+    const src = seeded();
+    src.settings.set(LOOK_KEY, SAVED_LOOK);
+    const opened = await openBackup((await backUp(src)).blob);
+    expect(opened.index.settings[LOOK_KEY]).toBe(SAVED_LOOK);
+
+    const dst = new FakeStore();
+    const mine = serializeLook({ style: 'warm', accent: '#33c98a', corners: 'sharp' });
+    dst.settings.set(LOOK_KEY, mine);
+    const sum = await restoreBackup(opened, dst);
+
+    expect(dst.settings.get(LOOK_KEY)).toBe(mine);
+    // the mode and the export options still come over
+    expect(sum.settings).toBe(2);
+  });
+
+  it('restores a backup made before looks were saved without adding one', async () => {
+    const opened = await openBackup(craft({ ...baseIndex, settings: { 'rf-theme': 'light' } }));
+    const dst = new FakeStore();
+    const sum = await restoreBackup(opened, dst);
+    expect(sum.settings).toBe(1);
+    expect(dst.settings.has(LOOK_KEY)).toBe(false);
+  });
+
   it('keeps a project that is newer on the phone, and replaces one that is older', async () => {
     const src = seeded();
     const opened = await openBackup((await backUp(src)).blob);
@@ -551,5 +602,13 @@ describe('opening a file that is not a usable backup', () => {
     const opened = await openBackup(craft(`{"app":"reelforge","format":1,"createdAt":5,"files":true,"settings":${JSON.stringify(settings)}}`));
     expect(opened.index.settings).toEqual({ 'rf-theme': 'light' });
     expect(opened.index.projects).toEqual([]);
+  });
+
+  it('drops a look that is not text', async () => {
+    const looks = [{ v: 1, style: 'slate', accent: '#00b2ff', corners: 'round' }, 42, null, ['slate']];
+    for (const look of looks) {
+      const opened = await openBackup(craft({ ...baseIndex, settings: { 'rf-theme': 'light', [LOOK_KEY]: look } }));
+      expect(opened.index.settings).toEqual({ 'rf-theme': 'light' });
+    }
   });
 });

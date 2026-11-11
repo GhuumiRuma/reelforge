@@ -9,6 +9,12 @@
   --accent: #ff3d6e;
   --accent-fill: #e0245e;
   --accent-press: #c81e52;
+  /* Text and icons on --accent-fill: white, or near-black when the chosen accent is light (src/state/appearance.ts). */
+  --on-accent: #fff;
+  /* The accent where the recording button sits on --inverse. */
+  --accent-on-inverse: var(--accent-fill);
+  /* Errors and destructive actions: pink like the default accent, but it stays put when the user picks another accent. */
+  --danger: #ff3d6e;
   /* Colors the light theme changes beyond the palette above. Dark values are the former literals. */
   --scrim: rgba(0, 0, 0, 0.6);
   --dialog-bg: var(--raised);
@@ -28,6 +34,8 @@
   --accent-bright: #ff3d6e;
   --on-media-dim: #9a9aa8;
   --on-media-text: #f4f4f7;
+  /* Corner scale for the Corners option (src/state/appearance.ts): every radius from 5px up is multiplied by it. */
+  --rs: 1;
   --kb: 0px;
   --sat: env(safe-area-inset-top, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
@@ -59,6 +67,7 @@
   --text: #14141a;
   --dim: #5f5f6c;
   --accent: #ca1250;
+  --danger: #ca1250;
   --scrim: rgba(16, 16, 24, 0.45);
   --dialog-bg: #fff;
   --toast-bg: #fff;
@@ -188,7 +197,7 @@ p {
   place-items: center;
   width: 44px;
   height: 44px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   flex: none;
   color: var(--text);
 }
@@ -209,14 +218,14 @@ p {
   gap: 8px;
   min-height: 48px;
   padding: 0 20px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   font-weight: 600;
   font-size: 16px;
 }
 
 .primary-btn {
   background: var(--accent-fill);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .primary-btn:active:not(:disabled) {
@@ -240,13 +249,17 @@ p {
 .text-btn {
   min-height: 44px;
   padding: 0 12px;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--rs));
   font-weight: 600;
   color: var(--text);
 }
 
 .text-btn.accent {
   color: var(--accent);
+}
+
+.text-btn.danger {
+  color: var(--danger);
 }
 
 .text-btn:active:not(:disabled) {
@@ -297,7 +310,7 @@ p {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--rs));
 }
 
 .topbar .title:active {
@@ -318,7 +331,7 @@ p {
   gap: 2px;
   height: 30px;
   padding: 0 8px 0 10px;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--rs));
   background: var(--raised);
   font-size: 13px;
   font-weight: 600;
@@ -337,9 +350,9 @@ p {
   gap: 6px;
   height: 34px;
   padding: 0 16px;
-  border-radius: 17px;
+  border-radius: calc(17px * var(--rs));
   background: var(--accent-fill);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 14px;
   font-weight: 700;
 }
@@ -410,7 +423,7 @@ p {
   display: grid;
   place-items: center;
   background: var(--accent-fill);
-  color: #fff;
+  color: var(--on-accent);
   pointer-events: auto;
   touch-action: none;
 }
@@ -524,7 +537,7 @@ p {
   height: 34px;
   display: grid;
   place-items: center;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--rs));
   background: var(--inverse);
   color: var(--on-inverse);
   box-shadow: var(--shadow-chip);
@@ -572,7 +585,7 @@ p {
   font-size: 11px;
   line-height: 1.1;
   color: var(--text);
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
 }
 
 .tool span {
@@ -617,7 +630,7 @@ p {
   padding: 0 var(--sar) var(--sab) var(--sal);
   background: var(--panel);
   border-top: 1px solid var(--line);
-  border-radius: 14px 14px 0 0;
+  border-radius: calc(14px * var(--rs)) calc(14px * var(--rs)) 0 0;
   animation: sheet-in 280ms var(--ease-out);
 }
 
@@ -775,7 +788,7 @@ html[data-kb] .sheet {
   display: flex;
   padding: 3px;
   gap: 2px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: var(--raised);
 }
 
@@ -784,7 +797,7 @@ html[data-kb] .sheet {
   min-width: 0;
   min-height: 38px;
   padding: 0 6px;
-  border-radius: 9px;
+  border-radius: calc(9px * var(--rs));
   font-size: 13px;
   font-weight: 600;
   color: var(--dim);
@@ -837,7 +850,7 @@ html[data-kb] .sheet {
   flex: none;
   min-height: 36px;
   padding: 0 14px;
-  border-radius: 18px;
+  border-radius: calc(18px * var(--rs));
   background: var(--raised);
   border: 1.5px solid transparent;
   font-size: 13px;
@@ -887,7 +900,7 @@ html[data-kb] .sheet {
   position: relative;
   min-height: 68px;
   padding: 8px 4px 6px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: var(--raised);
   border: 2px solid transparent;
   display: flex;
@@ -913,7 +926,7 @@ html[data-kb] .sheet {
 .tile .swatch {
   width: 44px;
   height: 44px;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--rs));
 }
 
 .tile small {
@@ -933,7 +946,7 @@ html[data-kb] .sheet {
 .filter-tile .swatch {
   width: 56px;
   height: 56px;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--rs));
   object-fit: cover;
 }
 
@@ -1031,6 +1044,7 @@ html[data-kb] .sheet {
 }
 
 [aria-checked='true'] > .switch::after {
+  background: var(--on-accent);
   transform: translateX(18px);
 }
 
@@ -1038,7 +1052,7 @@ html[data-kb] .sheet {
   width: 100%;
   min-height: 48px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   border: 1px solid var(--line);
   background: var(--raised);
   font-size: 16px;
@@ -1089,7 +1103,7 @@ select.input {
 
 .error-text {
   font-size: 14px;
-  color: var(--accent);
+  color: var(--danger);
 }
 
 .progress {
@@ -1180,7 +1194,7 @@ select.input {
   width: 100%;
   max-width: 360px;
   padding: 20px 16px 10px 20px;
-  border-radius: 16px;
+  border-radius: calc(16px * var(--rs));
   background: var(--dialog-bg);
   border: 1px solid var(--line);
   display: flex;
@@ -1235,7 +1249,7 @@ select.input {
 }
 
 .menu-item.danger {
-  color: var(--accent);
+  color: var(--danger);
 }
 
 .menu-check {
@@ -1263,7 +1277,7 @@ select.input {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: var(--toast-bg);
   border: 1px solid var(--toast-line);
   font-size: 14px;
@@ -1273,7 +1287,7 @@ select.input {
 }
 
 .toast.error svg {
-  color: var(--accent);
+  color: var(--danger);
 }
 
 .task {
@@ -1284,7 +1298,7 @@ select.input {
   transform: translateX(-50%);
   width: min(320px, calc(100% - 32px));
   padding: 10px 14px 12px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: var(--toast-bg);
   border: 1px solid var(--toast-line);
   font-size: 13px;
@@ -1343,9 +1357,9 @@ select.input {
   width: 100%;
   min-height: 72px;
   padding: 0 18px;
-  border-radius: 16px;
+  border-radius: calc(16px * var(--rs));
   background: var(--accent-fill);
-  color: #fff;
+  color: var(--on-accent);
   text-align: left;
 }
 
@@ -1396,7 +1410,7 @@ select.input {
   min-height: 88px;
   padding: 8px 0;
   text-align: left;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
 }
 
 .project-open:active {
@@ -1407,7 +1421,7 @@ select.input {
   flex: none;
   width: 56px;
   height: 72px;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--rs));
   background: var(--raised);
   overflow: hidden;
   display: grid;
@@ -1446,7 +1460,7 @@ select.input {
   gap: 12px;
   align-items: flex-start;
   padding: 14px;
-  border-radius: 14px;
+  border-radius: calc(14px * var(--rs));
   background: var(--panel);
   border: 1px solid var(--line);
   font-size: 14px;
@@ -1519,7 +1533,7 @@ select.input {
 .aspect {
   min-height: 104px;
   padding: 12px 6px 10px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: var(--raised);
   border: 2px solid transparent;
   display: flex;
@@ -1549,6 +1563,146 @@ select.input {
   font-size: 11px;
   color: var(--dim);
   line-height: 1.2;
+}
+
+/* ------------------------------------------------------------------ appearance sheet */
+
+/* Made of the page's own tokens, so it shows every choice as it is made. */
+.look-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: calc(12px * var(--rs));
+  background: var(--stage);
+  border: 1px solid var(--line);
+}
+
+.lp-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.lp-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.lp-title small {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dim);
+}
+
+.lp-btn {
+  flex: none;
+  padding: 8px 16px;
+  border-radius: calc(10px * var(--rs));
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.lp-lane {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  height: 30px;
+}
+
+.lp-clip {
+  flex: 1 1 0;
+  border-radius: calc(6px * var(--rs));
+  background: var(--raised);
+}
+
+.lp-clip.on {
+  flex-grow: 1.6;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.lp-head {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: 62%;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--text);
+}
+
+.look-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+/* Each tile is a small mock-up in its own style's colors, set inline as --m-*, rather than the page's. */
+.look-tile {
+  min-height: 0;
+  padding: 6px 2px 7px;
+  justify-content: flex-start;
+  font-weight: 600;
+}
+
+.look-mock {
+  width: 100%;
+  height: 40px;
+  padding: 6px 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-radius: calc(7px * var(--rs));
+  background: var(--m-stage);
+  box-shadow: inset 0 0 0 1px var(--m-line);
+}
+
+.look-mock i {
+  display: block;
+  border-radius: 2px;
+}
+
+.lm-text {
+  width: 64%;
+  height: 3px;
+  background: var(--m-text);
+}
+
+.lm-dim {
+  width: 40%;
+  height: 3px;
+  background: var(--m-dim);
+}
+
+.lm-row {
+  display: flex;
+  gap: 3px;
+  height: 11px;
+  margin-top: auto;
+}
+
+.lm-card {
+  flex: 1;
+  background: var(--m-raised);
+  box-shadow: inset 0 0 0 1.5px var(--m-accent);
+}
+
+.lm-pill {
+  width: 15px;
+  background: var(--m-fill);
+}
+
+.look-name {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 /* ------------------------------------------------------------------ focus (fullscreen preview) */
@@ -1612,7 +1766,7 @@ select.input {
   gap: 4px;
   min-height: 52px;
   padding: 0 4px 0 12px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: var(--raised);
 }
 
@@ -1658,7 +1812,7 @@ select.input {
 .emoji-grid button {
   height: 48px;
   font-size: 28px;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--rs));
   line-height: 1;
 }
 
@@ -1687,12 +1841,12 @@ select.input {
   display: grid;
   place-items: center;
   background: var(--accent-fill);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .rec-btn.recording {
   background: var(--inverse);
-  color: var(--accent-fill);
+  color: var(--accent-on-inverse);
 }
 
 .meter {
@@ -1725,7 +1879,7 @@ select.input {
 .media-thumb {
   position: relative;
   aspect-ratio: 1;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--rs));
   overflow: hidden;
   background: var(--raised);
   display: grid;
@@ -1769,7 +1923,7 @@ select.input {
   right: 4px;
   bottom: 4px;
   padding: 1px 5px;
-  border-radius: 6px;
+  border-radius: calc(6px * var(--rs));
   background: rgba(0, 0, 0, 0.7);
   color: #fff;
   font-size: 11px;
@@ -1863,7 +2017,7 @@ select.input {
   place-items: center;
   min-height: 120px;
   padding: 8px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: var(--raised);
   cursor: crosshair;
 }
@@ -1872,7 +2026,7 @@ select.input {
   display: block;
   max-width: 100%;
   max-height: 180px;
-  border-radius: 6px;
+  border-radius: calc(6px * var(--rs));
 }
 
 .run-view {
@@ -1899,7 +2053,7 @@ select.input {
   width: 100%;
   max-height: 40dvh;
   object-fit: contain;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: #000;
 }
 
@@ -1908,14 +2062,14 @@ select.input {
   flex-direction: column;
   gap: 6px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: var(--raised);
 }
 
 .export-done video {
   width: 100%;
   max-height: 40dvh;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: #000;
 }
 
@@ -1950,7 +2104,7 @@ select.input {
 }
 
 .time-fields .input[aria-invalid='true'] {
-  border-color: var(--accent);
+  border-color: var(--danger);
 }
 
 .note b {
@@ -2036,7 +2190,7 @@ select.input {
 .clip-player {
   width: 100%;
   max-height: 55dvh;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--rs));
   background: #000;
 }
 
@@ -2210,7 +2364,7 @@ select.input {
 
 .time-row .chip {
   min-height: 44px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
 }
 
 .studio-busy {
@@ -2218,7 +2372,7 @@ select.input {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: calc(12px * var(--rs));
   background: var(--panel);
   border: 1px solid var(--line);
 }
@@ -2254,7 +2408,7 @@ select.input {
   width: 100%;
   padding: 6px 0;
   text-align: left;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--rs));
 }
 
 .yt-result:active,
@@ -2267,7 +2421,7 @@ select.input {
   flex: none;
   width: 144px;
   aspect-ratio: 16 / 9;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--rs));
   overflow: hidden;
   background: var(--raised);
 }

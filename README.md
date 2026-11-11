@@ -31,7 +31,13 @@ If Android says **App not installed** because the app **conflicts with an existi
 - **Layers:** picture-in-picture overlays, text and audio tracks.
 - **Export:** MP4 at up to 4K and 60 fps with a size estimate, then share straight to TikTok, Instagram or YouTube. You can also save a single frame as a thumbnail.
 - **Safety net:** unlimited undo and redo, and autosave of every project to the device.
-- **Light or dark:** the app follows your phone's setting. To pick one yourself, tap the **Appearance** button at the top of the home screen and choose **Light**, **Dark** or **System default**.
+- **Make it yours:** the app follows your phone's light or dark setting and uses a pink accent until you change it. Tap the **Appearance** button at the top of the home screen to choose:
+  - **Mode:** System default, Light or Dark.
+  - **Style:** Standard (the original look), Pure (true black and neutral grays), Warm (soft, paper-like tones), Slate (cool blue-gray) or High contrast (the strongest text and clear borders).
+  - **Accent color:** one of 15 swatches (Pink, Red, Orange, Amber, Lime, Green, Mint, Teal, Sky, Blue, Indigo, Violet, Magenta, Copper or Graphite), or any color of your own with the color picker. Where a color would make text hard to read, it is adjusted a little for you.
+  - **Corners:** Sharp, Standard or Round.
+
+  A live preview at the top of the sheet shows each change, and **Reset to default** brings back the original look. Your choices are saved on the device, apply everywhere (including the timeline) and are used again the next time you open the app. If you never change anything, nothing is saved. A [backup](#back-up-and-restore) includes these choices, and restoring it on a new install brings them back.
 
 ## Clip studio
 
