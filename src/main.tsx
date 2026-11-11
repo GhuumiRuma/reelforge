@@ -42,7 +42,9 @@ import { App } from './App';
 import { useApp } from './state/app';
 import { trackKeyboard } from './lib/device';
 import { isNativeApp } from './lib/util';
+import { initTheme } from './state/theme';
 
+initTheme();
 trackKeyboard();
 
 // The Android app updates by installing a new APK, so it doesn't use the offline service worker.

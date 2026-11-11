@@ -9,6 +9,25 @@
   --accent: #ff3d6e;
   --accent-fill: #e0245e;
   --accent-press: #c81e52;
+  /* Colors the light theme changes beyond the palette above. Dark values are the former literals. */
+  --scrim: rgba(0, 0, 0, 0.6);
+  --dialog-bg: var(--raised);
+  --toast-bg: #262632;
+  --toast-line: #33333f;
+  --shadow-pop: 0 6px 24px rgba(0, 0, 0, 0.45);
+  --inverse: #fff;
+  --on-inverse: #000;
+  --shadow-chip: 0 2px 10px rgba(0, 0, 0, 0.55);
+  --mark: #5a5a6a;
+  --thumb-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  --seg-on: #34343f;
+  --seg-on-shadow: none;
+  --swatch-ring: rgba(255, 255, 255, 0.18);
+  --switch-off: #3a3a48;
+  /* Same in both themes: for things drawn over the video, which is always on black, and the text preset tiles. */
+  --accent-bright: #ff3d6e;
+  --on-media-dim: #9a9aa8;
+  --on-media-text: #f4f4f7;
   --kb: 0px;
   --sat: env(safe-area-inset-top, 0px);
   --sab: env(safe-area-inset-bottom, 0px);
@@ -28,6 +47,52 @@
   background: var(--stage);
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Light theme (see src/state/theme.ts). Text and --dim text keep 4.5:1 contrast on every surface. */
+:root[data-theme='light'] {
+  --stage: #f4f4f8;
+  --panel: #fff;
+  --raised: #e8e8ee;
+  --raised-2: #dcdce5;
+  --line: #dcdce4;
+  --text: #14141a;
+  --dim: #5f5f6c;
+  --accent: #ca1250;
+  --scrim: rgba(16, 16, 24, 0.45);
+  --dialog-bg: #fff;
+  --toast-bg: #fff;
+  --toast-line: #d4d4de;
+  --shadow-pop: 0 6px 24px rgba(20, 20, 40, 0.18);
+  --inverse: #17171d;
+  --on-inverse: #fff;
+  --shadow-chip: 0 2px 10px rgba(20, 20, 40, 0.3);
+  --mark: #9090a2;
+  --thumb-shadow:
+    0 0 0 1px rgba(20, 20, 40, 0.1),
+    0 1px 4px rgba(20, 20, 40, 0.3);
+  --seg-on: #fff;
+  --seg-on-shadow: 0 1px 3px rgba(20, 20, 40, 0.2);
+  --swatch-ring: rgba(0, 0, 0, 0.16);
+  --switch-off: #a8a8b8;
+  color-scheme: light;
+}
+
+/* An installed iOS app always draws its status bar text white (black-translucent), so the light theme puts a dark band behind it. */
+@media (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    :root[data-theme='light'] body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: var(--sat);
+      z-index: 100;
+      background: #0b0b0f;
+      pointer-events: none;
+    }
+  }
 }
 
 *,
@@ -315,7 +380,7 @@ p {
   gap: 10px;
   padding: 16px;
   text-align: center;
-  color: var(--dim);
+  color: var(--on-media-dim);
   font-size: 14px;
 }
 
@@ -329,7 +394,7 @@ p {
   position: absolute;
   left: 0;
   top: 0;
-  border: 1.5px solid var(--accent);
+  border: 1.5px solid var(--accent-bright);
   border-radius: 2px;
   transform-origin: center;
   pointer-events: none;
@@ -459,9 +524,9 @@ p {
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: #fff;
-  color: #000;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+  background: var(--inverse);
+  color: var(--on-inverse);
+  box-shadow: var(--shadow-chip);
   transition: transform 120ms ease-out;
 }
 
@@ -535,7 +600,7 @@ p {
   position: fixed;
   inset: 0;
   z-index: 30;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--scrim);
   animation: fade-in 200ms ease-out;
 }
 
@@ -682,7 +747,7 @@ html[data-kb] .sheet {
   height: 12px;
   margin-left: -1px;
   border-radius: 1px;
-  background: #5a5a6a;
+  background: var(--mark);
 }
 
 .slider-thumb {
@@ -693,7 +758,7 @@ html[data-kb] .sheet {
   margin: -11px 0 0 -11px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--thumb-shadow);
 }
 
 .slider:focus-visible {
@@ -728,7 +793,8 @@ html[data-kb] .sheet {
 }
 
 .seg button[aria-pressed='true'] {
-  background: #34343f;
+  background: var(--seg-on);
+  box-shadow: var(--seg-on-shadow);
   color: var(--text);
 }
 
@@ -890,7 +956,7 @@ html[data-kb] .sheet {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px var(--swatch-ring);
 }
 
 .swatch-btn[aria-pressed='true'] i,
@@ -943,7 +1009,7 @@ html[data-kb] .sheet {
   width: 46px;
   height: 28px;
   border-radius: 14px;
-  background: #3a3a48;
+  background: var(--switch-off);
   transition: background 160ms ease-out;
 }
 
@@ -980,6 +1046,12 @@ html[data-kb] .sheet {
 
 .input:focus {
   border-color: var(--accent);
+}
+
+/* The browser's default placeholder grey is under 4.5:1 on the light field. */
+:root[data-theme='light'] .input::placeholder {
+  color: var(--dim);
+  opacity: 1;
 }
 
 textarea.input {
@@ -1099,7 +1171,7 @@ select.input {
   place-items: center;
   padding: 24px;
   padding-bottom: calc(24px + var(--kb));
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--scrim);
   animation: fade-in 160ms ease-out;
 }
 
@@ -1108,7 +1180,7 @@ select.input {
   max-width: 360px;
   padding: 20px 16px 10px 20px;
   border-radius: 16px;
-  background: var(--raised);
+  background: var(--dialog-bg);
   border: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -1165,6 +1237,11 @@ select.input {
   color: var(--accent);
 }
 
+.menu-check {
+  margin-left: auto;
+  color: var(--accent);
+}
+
 .toasts {
   position: fixed;
   z-index: 70;
@@ -1186,10 +1263,10 @@ select.input {
   gap: 10px;
   padding: 10px 14px;
   border-radius: 12px;
-  background: #262632;
-  border: 1px solid #33333f;
+  background: var(--toast-bg);
+  border: 1px solid var(--toast-line);
   font-size: 14px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-pop);
   pointer-events: auto;
   animation: fade-in 160ms ease-out;
 }
@@ -1207,13 +1284,13 @@ select.input {
   width: min(320px, calc(100% - 32px));
   padding: 10px 14px 12px;
   border-radius: 12px;
-  background: #262632;
-  border: 1px solid #33333f;
+  background: var(--toast-bg);
+  border: 1px solid var(--toast-line);
   font-size: 13px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-pop);
 }
 
 .task .progress {
@@ -1508,6 +1585,14 @@ select.input {
   background: #2a2a34;
 }
 
+.preset-tile small {
+  color: var(--on-media-dim);
+}
+
+.preset-tile[aria-pressed='true'] small {
+  color: var(--on-media-text);
+}
+
 .sfx-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -1599,7 +1684,7 @@ select.input {
 }
 
 .rec-btn.recording {
-  background: #fff;
+  background: var(--inverse);
   color: var(--accent-fill);
 }
 
@@ -2194,6 +2279,7 @@ select.input {
   padding: 1px 5px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.8);
+  color: var(--on-media-text);
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;

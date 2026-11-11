@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
 import { useBack } from '../lib/back';
@@ -8,6 +9,8 @@ export interface MenuItem {
   label: string;
   icon?: ReactNode;
   danger?: boolean;
+  /** marks the current choice when the menu is a list of options */
+  checked?: boolean;
   /** the chosen action opens a text field (keeps the iOS keyboard reachable) */
   keyboard?: boolean;
 }
@@ -149,6 +152,7 @@ function MenuView({ r }: { r: Extract<Req, { kind: 'menu' }> }) {
             <button
               key={it.id}
               className={`menu-item${it.danger ? ' danger' : ''}`}
+              aria-pressed={it.checked}
               onClick={() => {
                 if (it.keyboard) primeKeyboard();
                 close(it.id);
@@ -156,6 +160,7 @@ function MenuView({ r }: { r: Extract<Req, { kind: 'menu' }> }) {
             >
               {it.icon}
               {it.label}
+              {it.checked && <Check className="menu-check" size={20} />}
             </button>
           ))}
           <button className="menu-item" onClick={() => close(null)}>

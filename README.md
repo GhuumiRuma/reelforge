@@ -25,6 +25,7 @@ After the first visit it works offline. Auto-captions download a speech model (a
 - **Layers:** picture-in-picture overlays, text and audio tracks.
 - **Export:** MP4 at up to 4K and 60 fps with a size estimate, then share straight to TikTok, Instagram or YouTube. You can also save a single frame as a thumbnail.
 - **Safety net:** unlimited undo and redo, and autosave of every project to the device.
+- **Light or dark:** the app follows your phone's setting. To pick one yourself, tap the **Appearance** button at the top of the home screen and choose **Light**, **Dark** or **System default**.
 
 ## Clip studio
 
