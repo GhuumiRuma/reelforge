@@ -75,7 +75,7 @@ function ConfirmView({ r }: { r: Extract<Req, { kind: 'confirm' }> }) {
           <button ref={cancelRef} className="text-btn" onClick={() => close(false)}>
             Cancel
           </button>
-          <button className={`text-btn${r.danger ? ' accent' : ''}`} onClick={() => close(true)}>
+          <button className={`text-btn${r.danger ? ' danger' : ''}`} onClick={() => close(true)}>
             {r.confirm}
           </button>
         </div>

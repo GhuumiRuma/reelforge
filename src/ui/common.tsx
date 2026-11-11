@@ -359,18 +359,21 @@ export function Swatches({
   onChange,
   label,
   colors = PALETTE,
+  nameOf = colorName,
 }: {
   value: string;
   onChange: (c: string) => void;
   label: string;
   colors?: string[];
+  /** the accessible name of a swatch; defaults to the name of a common color */
+  nameOf?: (c: string) => string;
 }) {
   const v = value.toLowerCase();
   const custom = !colors.some((c) => c.toLowerCase() === v);
   return (
     <div className="swatches" role="group" aria-label={label}>
       {colors.map((c) => (
-        <button key={c} className="swatch-btn" aria-pressed={c.toLowerCase() === v} aria-label={colorName(c)} onClick={() => onChange(c)}>
+        <button key={c} className="swatch-btn" aria-pressed={c.toLowerCase() === v} aria-label={nameOf(c)} onClick={() => onChange(c)}>
           <i style={{ background: c }} />
         </button>
       ))}

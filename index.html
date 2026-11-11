@@ -13,20 +13,34 @@ FORM: Category standard (standing exit, chosen by the user); staging is InShot's
     <meta name="theme-color" content="#0b0b0f" />
     <meta name="color-scheme" content="dark" />
     <script>
-      // Picks the saved theme before first paint so light users don't see a dark flash.
-      // Mirrors src/state/theme.ts (storage key, "system" default, light background color).
+      // Applies the saved mode and look before first paint so nobody sees the default for a moment first.
+      // Mirrors src/state/theme.ts (storage keys, "system" default, light background color) and the look that
+      // src/state/appearance.ts saves: its CSS and page colors are applied as they are. prepaint.test.ts runs this.
       (function () {
         var pref = null;
+        var saved = null;
         try {
           pref = localStorage.getItem('rf-theme');
+          saved = localStorage.getItem('rf-look');
         } catch (e) {}
         var light =
           pref === 'light' || (pref !== 'dark' && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
-        document.documentElement.dataset.theme = light ? 'light' : 'dark';
-        if (light) {
-          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#f4f4f8');
-          document.querySelector('meta[name="color-scheme"]').setAttribute('content', 'light');
-        }
+        var theme = light ? 'light' : 'dark';
+        var bg = light ? '#f4f4f8' : '#0b0b0f';
+        document.documentElement.dataset.theme = theme;
+        try {
+          var look = JSON.parse(saved);
+          // The CSS is only ever written by the app, but is checked for the characters it is made of anyway.
+          if (look && look.v === 1 && look.css && typeof look.css === 'string' && /^[\w\s#.,:;{}'\[\]=\-]*$/.test(look.css)) {
+            var style = document.createElement('style');
+            style.id = 'rf-look';
+            style.textContent = look.css;
+            document.head.appendChild(style);
+            if (look.bg && typeof look.bg[theme] === 'string' && /^#[0-9a-f]{6}$/i.test(look.bg[theme])) bg = look.bg[theme];
+          }
+        } catch (e) {}
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', bg);
+        document.querySelector('meta[name="color-scheme"]').setAttribute('content', theme);
       })();
     </script>
     <meta name="description" content="ReelForge: a full video editor for content creators that runs on your phone." />
