@@ -124,8 +124,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          # GitHub counts downloads per release, and this release is replaced on every push, so the new
+          # notes carry the old release's running total (see scripts/download-stats.mjs). This is
+          # best-effort: it must never stop the app from being published.
+          marker=""
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/android-latest" > "$RUNNER_TEMP/previous-release.json"; then
+            marker="$(node scripts/download-stats.mjs bank "$RUNNER_TEMP/previous-release.json" || true)"
+          fi
+          grep -Eqx '<!-- rf-banked-downloads:[0-9]+ -->' <<< "$marker" || marker=""
+          {
+            echo "Open this page on your Android phone and tap **ReelForge.apk** to download it, then open the file to install. Android asks you to allow installing apps from your browser the first time. Built from ${{ github.sha }}."
+            if [ -n "$marker" ]; then
+              echo
+              echo "$marker"
+            fi
+          } > "$RUNNER_TEMP/release-notes.md"
           gh release delete android-latest --yes --cleanup-tag || true
           gh release create android-latest ReelForge.apk \
             --title "Latest Android app (build ${{ github.run_number }})" \
             --target "${{ github.sha }}" \
-            --notes "Open this page on your Android phone and tap **ReelForge.apk** to download it, then open the file to install. Android asks you to allow installing apps from your browser the first time. Built from ${{ github.sha }}."
+            --notes-file "$RUNNER_TEMP/release-notes.md"

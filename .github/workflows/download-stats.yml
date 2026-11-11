@@ -1,0 +1,95 @@
+name: Download stats
+
+# Once a day, counts the downloads of the Android app and saves the running numbers on the
+# download-stats branch (see its README for the daily table). The first run after each Sunday also opens
+# a "Weekly downloads" issue. Run it by hand from the Actions tab to take an extra count.
+on:
+  schedule:
+    - cron: '10 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+# One count at a time, so two runs can't save over each other.
+concurrency:
+  group: download-stats
+  cancel-in-progress: false
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The numbers live on their own branch with no app code, so saving them never builds the app
+      # or touches main.
+      - name: Open the download-stats branch
+        run: |
+          set -euo pipefail
+          status=0
+          git ls-remote --exit-code --heads origin download-stats > /dev/null || status=$?
+          case "$status" in
+            0)
+              git fetch --depth 1 origin download-stats
+              git worktree add "$RUNNER_TEMP/stats" FETCH_HEAD ;;
+            2)
+              echo "Starting the download-stats branch."
+              git worktree add --detach "$RUNNER_TEMP/stats"
+              git -C "$RUNNER_TEMP/stats" switch --orphan download-stats ;;
+            *)
+              echo "::error::Could not look for the download-stats branch."
+              exit 1 ;;
+          esac
+
+      - name: Count the downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/report"
+          node scripts/download-stats.mjs snapshot --ledger "$RUNNER_TEMP/stats/downloads.json" --out "$RUNNER_TEMP/report"
+          if [ -f "$RUNNER_TEMP/report/README.md" ]; then
+            cp "$RUNNER_TEMP/report/README.md" "$RUNNER_TEMP/stats/README.md"
+            cat "$RUNNER_TEMP/report/README.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Save the numbers
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/stats"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing new to save."
+            exit 0
+          fi
+          git -c "user.name=github-actions[bot]" -c "user.email=41898282+github-actions[bot]@users.noreply.github.com" \
+            commit --quiet --message "Download stats for $(date -u +%F)"
+          git push origin HEAD:download-stats
+
+      # Every run prepares the report for the last finished week, and the issue is opened only if that
+      # week doesn't have one yet, so a missed Monday is made up the next day.
+      - name: Post the weekly report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          title_file="$RUNNER_TEMP/report/weekly-title.txt"
+          if [ ! -s "$title_file" ]; then
+            echo "There is no finished week to report yet."
+            exit 0
+          fi
+          title="$(cat "$title_file")"
+          reported="$(gh issue list --state all --label download-report --limit 500 --json title --jq '.[].title')"
+          if grep -Fxq -- "$title" <<< "$reported"; then
+            echo "\"$title\" has already been posted."
+            exit 0
+          fi
+          gh label create download-report --description "Weekly download report" --color 0e8a16 --force || true
+          gh issue create --title "$title" --body-file "$RUNNER_TEMP/report/weekly.md" --label download-report --assignee "$GITHUB_REPOSITORY_OWNER" \
+            || gh issue create --title "$title" --body-file "$RUNNER_TEMP/report/weekly.md" --label download-report
