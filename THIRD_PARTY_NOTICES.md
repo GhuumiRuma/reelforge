@@ -25,10 +25,36 @@ itself as libavcodec 62.23.103. FFmpeg is copyright its authors, and each FFmpeg
 source file carries its own notice. Mediabunny's build recipe turns on only the
 `aac` encoder and no GPL or non-free parts, so the LGPL applies.
 
-- FFmpeg source code: <https://ffmpeg.org/download.html> and
-  <https://github.com/FFmpeg/FFmpeg>
-- Mediabunny's build recipe and glue code:
-  <https://github.com/Vanilagy/mediabunny/tree/v1.61.0/packages/aac-encoder>
+- FFmpeg source code, at the commit explained below:
+  <https://git.ffmpeg.org/gitweb/ffmpeg.git/commit/fb8a12db17e2c7bb3b6f3618c333fc8364190c3c>
+  and, as a source archive,
+  <https://github.com/FFmpeg/FFmpeg/archive/fb8a12db17e2c7bb3b6f3618c333fc8364190c3c.tar.gz>
+- Mediabunny's build recipe (see "Building and development"):
+  <https://github.com/Vanilagy/mediabunny/blob/v1.61.0/packages/aac-encoder/README.md>
+- Mediabunny's glue code:
+  <https://github.com/Vanilagy/mediabunny/blob/v1.61.0/packages/aac-encoder/src/bridge.c>
+
+**Which FFmpeg commit.** Mediabunny does not record the FFmpeg commit it built
+version 1.61.0 from, so it was worked out from the shipped module. The module
+reports libavcodec 62.23.103. Among the FFmpeg master commits that report that
+version, the source file and line number of every assertion compiled into the
+module match only 27 consecutive ones: `fb8a12db17e2` (committed 2026-02-10) to
+`e1484a30e572` (committed 2026-02-12). Of those, only the first changes code the
+recipe builds (`libavutil/opt.c`); the other 26 touch only parts the recipe
+leaves out (other codecs, other FFmpeg libraries, documentation and tests). So
+all 27 build the same encoder, and the first is the one linked above. Newer
+Mediabunny READMEs name another commit, `60a2818f76d`, but that is for a later
+rebuild (libavcodec 63.25.101) and does not apply to 1.61.0. Mediabunny does not
+record the Emscripten version used for 1.61.0 either.
+
+**Getting the source.** GhuumiRuma, who distributes ReelForge, offers you the
+materials that section 6(a) of the LGPL names, including the complete
+corresponding source code of the FFmpeg encoder in your copy (the FFmpeg source
+named above, with Mediabunny's glue code and build recipe). This is a written
+offer under section 6(c) of the LGPL. It is valid for at least three years from
+the day you receive your copy of ReelForge, for a charge of no more than the
+cost of performing the distribution. To ask, open an issue at
+<https://github.com/GhuumiRuma/reelforge/issues>.
 
 **Replacing it.** You can swap in your own build of this encoder. Build
 `@mediabunny/aac-encoder` from that recipe (with your changes, if you have any),
@@ -80,11 +106,15 @@ License 2.0. Both texts are under [License texts](#license-texts).
 ## Speech recognition
 
 Captions are made on your device by OpenAI's Whisper speech models, which run on
-Transformers.js and ONNX Runtime Web.
+Transformers.js and ONNX Runtime Web. Transformers.js has two more Hugging Face
+packages built into its own code: `@huggingface/jinja` and
+`@huggingface/tokenizers`.
 
 | Component | License | Copyright and source |
 | --- | --- | --- |
 | `@huggingface/transformers` | Apache 2.0 | <https://github.com/huggingface/transformers.js> |
+| `@huggingface/jinja` | MIT | Copyright (c) 2023 Hugging Face. <https://github.com/huggingface/huggingface.js/tree/jinja-v0.5.10/packages/jinja> |
+| `@huggingface/tokenizers` | Apache 2.0 | <https://github.com/huggingface/tokenizers.js/tree/v0.2.0> |
 | `onnxruntime-web`, `onnxruntime-common` | MIT | Copyright (c) Microsoft Corporation. <https://github.com/microsoft/onnxruntime> |
 | Whisper models | MIT | Copyright (c) 2022 OpenAI. <https://github.com/openai/whisper> |
 
@@ -737,7 +767,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 ### Apache License 2.0
 
 For Permanent Marker (its copyright line is in the Fonts table),
-`@huggingface/transformers`, `@bufbuild/protobuf` and the AndroidX libraries.
+`@huggingface/transformers`, `@huggingface/tokenizers`, `@bufbuild/protobuf` and
+the AndroidX libraries.
 
 ```text
                                  Apache License

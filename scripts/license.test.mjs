@@ -51,14 +51,85 @@ describe('third-party notices', () => {
   const lock = JSON.parse(read('package-lock.json')).packages;
   const fonts = [...new Set([...read('src/main.tsx').matchAll(/@fontsource\/([a-z-]+)\//g)].map((m) => m[1]))];
 
+  // What ships is what npm installs for package.json's dependencies, for the packages those need, and so on. That includes packages
+  // built into another package: Transformers.js has `@huggingface/jinja` and `@huggingface/tokenizers` inside its prebuilt web file,
+  // so no build log lists them, but they ship.
+  // Packages in that tree that never reach a device are cut where they come in, at the one package that needs them, so anything else
+  // that needs one still brings it in. The test 'leaves out only packages that the shipped code never loads' checks each reason.
+  const notShipped = {
+    // Only Transformers.js's Node.js builds load these. Its web build, which the app bundles, does not.
+    '@huggingface/transformers': ['onnxruntime-node', 'sharp'],
+    // The one ONNX Runtime Web build the app loads, ort.webgpu.bundle.min.mjs, has everything it needs inside it.
+    'onnxruntime-web': ['flatbuffers', 'guid-typescript', 'long', 'platform', 'protobufjs'],
+    // @capacitor/core lists tslib, but none of its code uses it.
+    '@capacitor/core': ['tslib'],
+  };
+  const folder = (key) => key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+  // The copy of a package that `from` (a lockfile key, or '' for package.json) gets: its own node_modules first, then each one above.
+  const nearestCopy = (from, name) => {
+    for (let dir = from; ; dir = dir.slice(0, Math.max(dir.lastIndexOf('node_modules/') - 1, 0))) {
+      const key = [dir, 'node_modules', name].filter(Boolean).join('/');
+      if (lock[key]) return key;
+      if (!dir) throw new Error(`${name}, needed by ${from || 'package.json'}, is not in package-lock.json`);
+    }
+  };
+  const shipped = (() => {
+    const seen = new Set();
+    const visit = (key) => {
+      if (seen.has(key)) return;
+      seen.add(key);
+      // Optional dependencies (platform binaries and the like) are skipped; none of the packages that ship has any.
+      const { dependencies = {}, peerDependencies = {}, peerDependenciesMeta = {} } = lock[key];
+      const needs = [...Object.keys(dependencies), ...Object.keys(peerDependencies).filter((peer) => !peerDependenciesMeta[peer]?.optional)];
+      for (const need of needs) {
+        // @types/* packages are type declarations, which the build erases.
+        if (need.startsWith('@types/') || notShipped[folder(key)]?.includes(need)) continue;
+        visit(nearestCopy(key, need));
+      }
+    };
+    for (const name of Object.keys(JSON.parse(read('package.json')).dependencies)) visit(nearestCopy('', name));
+    return [...new Set([...seen].map(folder))].sort();
+  })();
+  const missingFrom = (text) => shipped.filter((name) => !text.includes(`\`${name}\``));
+  const transformers = nearestCopy('', '@huggingface/transformers');
+
   it('has no placeholders left in it', () => {
     expect(notices).not.toMatch(/@@\w+@@/);
   });
 
-  it('names every package the app depends on', () => {
-    for (const name of Object.keys(JSON.parse(read('package.json')).dependencies)) {
-      expect(notices, name).toContain(`\`${name}\``);
+  it('names every package that ships, including the ones other packages bring along', () => {
+    expect(missingFrom(notices), 'shipped packages the notices do not name').toEqual([]);
+  });
+
+  it('finds the packages built into Transformers.js, and skips the ones that never ship', () => {
+    expect(shipped).toEqual(
+      expect.arrayContaining(['@huggingface/transformers', '@huggingface/jinja', '@huggingface/tokenizers', 'onnxruntime-web', 'onnxruntime-common']),
+    );
+    for (const name of ['vite', 'vitest', 'onnxruntime-node', 'sharp', 'tslib', '@types/dom-webcodecs']) {
+      expect(shipped, name).not.toContain(name);
     }
+  });
+
+  it('would notice a shipped package that the notices drop', () => {
+    expect(missingFrom(notices.replaceAll('`@huggingface/jinja`', 'Jinja'))).toContain('@huggingface/jinja');
+  });
+
+  it('leaves out only packages that the shipped code never loads', () => {
+    // Transformers.js's web build imports some packages and has others built in; a built-in one leaves a path comment.
+    const web = read(`${transformers}/dist/transformers.web.js`);
+    const loads = (name) => new RegExp(`^import\\b[^'"]*?from\\s*["']${name}["']|^// .*node_modules/${name}/`, 'm').test(web);
+    expect(loads('onnxruntime-web/webgpu'), 'the web build imports ONNX Runtime Web').toBe(true);
+    expect(loads('@huggingface/jinja'), 'the web build has Jinja built in').toBe(true);
+    for (const name of ['onnxruntime-node', 'sharp']) {
+      expect(loads(name), `the web build loads ${name}`).toBe(false);
+    }
+
+    // The WebGPU build of ONNX Runtime Web is a bundle. Its source map lists what is inside it, and none of that is from node_modules.
+    const { sources } = JSON.parse(read(`${nearestCopy(transformers, 'onnxruntime-web')}/dist/ort.webgpu.bundle.min.mjs.map`));
+    expect(sources.length).toBeGreaterThan(0);
+    expect(sources.filter((source) => source.includes('node_modules'))).toEqual([]);
+
+    expect(read(`${nearestCopy('', '@capacitor/core')}/dist/index.js`)).not.toContain('tslib');
   });
 
   it('lists each font the app loads, with the copyright line from its own package', () => {
@@ -75,6 +146,20 @@ describe('third-party notices', () => {
     for (const name of ['mediabunny', '@mediabunny/aac-encoder']) {
       expect(notices, name).toContain(lock[`node_modules/${name}`].version);
     }
+  });
+
+  it('points the Hugging Face source links at the versions the lockfile installs', () => {
+    const version = (name) => lock[nearestCopy(transformers, name)].version;
+    expect(notices).toContain(`/huggingface.js/tree/jinja-v${version('@huggingface/jinja')}/packages/jinja>`);
+    expect(notices).toContain(`/tokenizers.js/tree/v${version('@huggingface/tokenizers')}>`);
+  });
+
+  it('copies the Jinja copyright line from its own package', () => {
+    const row = notices.split('\n').find((line) => line.startsWith('|') && line.includes('`@huggingface/jinja`'));
+    expect(row, 'Jinja has a row in the Speech recognition table').toBeTruthy();
+    const copyright = flat(row.split('|')[3]).split('. <')[0];
+    expect(copyright).toMatch(/^Copyright \(c\) \d{4} \S/);
+    expect(flat(read(`${nearestCopy(transformers, '@huggingface/jinja')}/LICENSE`))).toContain(copyright);
   });
 
   it('includes the full text of the font licenses', () => {
@@ -98,6 +183,23 @@ describe('third-party notices', () => {
     expect(flatNotices).toContain('Permission is hereby granted, free of charge, to any person obtaining a copy of this software');
     expect(flatNotices).toContain('Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted');
     expect(flatNotices).toContain('Neither the name of Google Inc. nor the names of its contributors may be used');
+  });
+
+  it('pins the FFmpeg source to one commit and to the Mediabunny tag the lockfile installs, and keeps the written offer', () => {
+    const start = notices.indexOf('## FFmpeg AAC encoder');
+    expect(start, 'the notices have an FFmpeg AAC encoder section').toBeGreaterThan(-1);
+    const section = notices.slice(start, notices.indexOf('\n## ', start));
+
+    // A branch or a short hash can move or be ambiguous. Only a full commit hash names the FFmpeg source behind the shipped encoder.
+    expect([...new Set(section.match(/\b[0-9a-f]{40}\b/g))], 'one full FFmpeg commit hash').toHaveLength(1);
+
+    // A new @mediabunny/aac-encoder can be a new build of FFmpeg, so the pin and the links to the recipe get checked again.
+    const tags = [...section.matchAll(/\/mediabunny\/(?:blob|tree)\/v(\d+\.\d+\.\d+)\//g)].map((m) => m[1]);
+    expect(tags.length, 'the section links the Mediabunny recipe at a version tag').toBeGreaterThan(0);
+    expect(new Set(tags), 'the links name the locked @mediabunny/aac-encoder version').toEqual(new Set([lock['node_modules/@mediabunny/aac-encoder'].version]));
+
+    expect(flat(section)).toContain('written offer');
+    expect(flat(section)).toContain('three years');
   });
 });
 
