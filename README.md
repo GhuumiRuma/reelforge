@@ -2,11 +2,11 @@
 
 A full video editor for content creators that runs on your phone. Edit, caption and export without an account, uploads, watermark or subscription. Everything, including speech-to-text and video encoding, happens on the device.
 
-**Open it:** https://monicarivera-work.github.io/reelforge/
+**Open it:** https://ghuumiruma.github.io/reelforge/
 
 ## Install it on your phone
 
-- **Android app (Samsung and other Android phones):** on the phone, open the [Latest Android app release](https://github.com/monicarivera-work/reelforge/releases/tag/android-latest) and tap **ReelForge.apk**. Open the downloaded file and tap **Install**. The first time, Android asks you to allow installs from your browser (on Samsung: **Settings → Apps → Special access → Install unknown apps**). New versions install over the old one and keep your clips. Only the Android app can search and download from YouTube, or download from TikTok and Instagram.
+- **Android app (Samsung and other Android phones):** on the phone, open the [Latest Android app release](https://github.com/GhuumiRuma/reelforge/releases/tag/android-latest) and tap **ReelForge.apk**. Open the downloaded file and tap **Install**. The first time, Android asks you to allow installs from your browser (on Samsung: **Settings → Apps → Special access → Install unknown apps**). New versions install over the old one and keep your clips. Only the Android app can search and download from YouTube, or download from TikTok and Instagram.
 - **iPhone:** open the link in Safari, tap **Share**, then **Add to Home Screen**.
 - **Android, desktop or any browser:** open the link in Chrome, tap the **⋮** menu, then **Install app** (or **Add to Home screen**).
 
