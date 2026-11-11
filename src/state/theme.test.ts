@@ -84,6 +84,24 @@ describe.each([
   });
 });
 
+describe('light theme switch', () => {
+  // A switch has no border, so its off track is all that shows its edge and where the thumb is (WCAG 1.4.11: 3:1).
+  const thumb = declarations('.switch::after').background;
+
+  it('draws the off track from --switch-off on the sheet', () => {
+    expect(declarations('.switch').background).toBe('var(--switch-off)');
+    expect(declarations('.sheet').background).toBe('var(--panel)');
+  });
+
+  it.each([
+    ['the thumb', thumb],
+    ['the sheet', light['--panel']],
+  ])('keeps the off track 3:1 clear of %s', (_what, color) => {
+    expect(color).toMatch(/^#[\da-f]{3}(?:[\da-f]{3})?$/i);
+    expect(contrast(light['--switch-off'], color)).toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe('colors that sit on fixed dark surfaces', () => {
   const tile = declarations('.preset-tile').background;
 
