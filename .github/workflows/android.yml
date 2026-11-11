@@ -101,8 +101,11 @@ jobs:
           apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -n 1 || true)"
           [ -n "$apksigner" ] || { echo "::error::apksigner was not found in the Android SDK."; exit 1; }
           report="$("$apksigner" verify --print-certs ReelForge.apk)"
-          cert="$(printf '%s\n' "$report" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
-          [ -n "$cert" ] || { echo "::error::Could not read the signing certificate from ReelForge.apk."; exit 1; }
+          echo "::group::apksigner report"
+          printf '%s\n' "$report"
+          echo "::endgroup::"
+          cert="$(printf '%s\n' "$report" | awk '/^Signer.* certificate SHA-256 digest: / { print tolower($NF); exit }')"
+          printf '%s' "$cert" | grep -Eq '^[0-9a-f]{64}$' || { echo "::error::Could not read the signing certificate from ReelForge.apk. See the apksigner report above."; exit 1; }
           {
             echo "### Android app signature"
             echo "- Signing key: \`$SIGNING_SOURCE\`"
