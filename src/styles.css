@@ -74,7 +74,8 @@
   --seg-on: #fff;
   --seg-on-shadow: 0 1px 3px rgba(20, 20, 40, 0.2);
   --swatch-ring: rgba(0, 0, 0, 0.16);
-  --switch-off: #a8a8b8;
+  /* At least 3:1 against the sheet and the white thumb, because the switch has no border. */
+  --switch-off: #8a8a9b;
   color-scheme: light;
 }
 
