@@ -5,8 +5,12 @@ import { VitePWA } from 'vite-plugin-pwa';
 // The Android app (Capacitor) serves the build from the root; GitHub Pages serves it from /reelforge/.
 const BASE = process.env.CAPACITOR_BUILD ? '/' : '/reelforge/';
 
+// Which commit this build is made from. The app compares it with the one it last ran as, to notice an update.
+const BUILD_ID = (process.env.GITHUB_SHA ?? '').slice(0, 12) || 'dev';
+
 export default defineConfig({
   base: BASE,
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   plugins: [
     react(),
     VitePWA({

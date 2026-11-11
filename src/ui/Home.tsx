@@ -1,16 +1,18 @@
-import { Clapperboard, Copy, EllipsisVertical, Film, Pencil, Plus, RefreshCw, Scissors, Smartphone, Trash, TriangleAlert, X } from 'lucide-react';
+import { Clapperboard, Copy, DatabaseBackup, EllipsisVertical, Film, Pencil, Plus, RefreshCw, Scissors, ShieldCheck, Smartphone, Trash, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Project } from '../types';
+import { answerReminder, reminderForThisLaunch } from '../lib/backupReminder';
 import { deleteProject, listProjects, requestPersistence, saveProject, storageInfo } from '../lib/db';
 import { newProject } from '../lib/defaults';
 import { canEncodeVideo, pickFiles } from '../lib/device';
 import { projectDuration } from '../lib/layout';
 import { ensureThumbs, getThumbStrip, mediaEvents } from '../lib/media';
 import { openProject, openStudio } from '../lib/route';
-import { formatBytes, formatDuration, isAndroid, isIOS, isNativeApp, isStandalone, uid } from '../lib/util';
+import { ago, formatBytes, formatDuration, isAndroid, isIOS, isNativeApp, isStandalone, uid } from '../lib/util';
 import { useApp } from '../state/app';
 import { toast } from '../state/store';
 import { setPendingImport } from './actions';
+import { BackupSheet } from './BackupSheet';
 import { ClipsLibrary } from './Clips';
 import { Progress, Segmented } from './common';
 import { confirmDialog, menuDialog, promptDialog } from './dialog';
@@ -33,6 +35,10 @@ export function Home() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
   const [tab, setTab] = useState<Tab>(initialTab);
+  const [backupOpen, setBackupOpen] = useState(false);
+  const [remind, setRemind] = useState(false);
+  // Bumped by a restore so the clip library, which loads when it appears, reads what was added.
+  const [restores, setRestores] = useState(0);
 
   const pickTab = (t: Tab) => {
     setTab(t);
@@ -55,6 +61,19 @@ export function Home() {
   };
 
   useEffect(refresh, []);
+
+  useEffect(() => {
+    let live = true;
+    void reminderForThisLaunch().then((r) => live && setRemind(r));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const answerBackupReminder = () => {
+    answerReminder();
+    setRemind(false);
+  };
 
   const startNew = () => {
     // The picker has to open synchronously inside the tap.
@@ -80,10 +99,24 @@ export function Home() {
           <Clapperboard size={26} aria-hidden />
           ReelForge
         </h1>
-        <ThemeButton />
+        <div className="head-actions">
+          <button className="icon-btn" aria-label="Back up and restore" onClick={() => setBackupOpen(true)}>
+            <DatabaseBackup size={22} />
+          </button>
+          <ThemeButton />
+        </div>
       </header>
 
       <UpdateNotice />
+      {remind && (
+        <BackupReminder
+          onOpen={() => {
+            setBackupOpen(true);
+            answerBackupReminder();
+          }}
+          onDismiss={answerBackupReminder}
+        />
+      )}
       <InstallNotice />
       {!canEncodeVideo() && (
         <div className="notice" role="note">
@@ -122,7 +155,7 @@ export function Home() {
         ]}
       />
 
-      {tab === 'clips' && <ClipsLibrary />}
+      {tab === 'clips' && <ClipsLibrary key={restores} />}
 
       {tab === 'projects' && projects && projects.length > 0 && (
         <>
@@ -152,6 +185,17 @@ export function Home() {
           <span>Projects and clips are stored on this device and never uploaded.</span>
         </div>
       )}
+
+      {backupOpen && (
+        <BackupSheet
+          onClose={() => setBackupOpen(false)}
+          onRestored={() => {
+            refresh();
+            setRestores((n) => n + 1);
+          }}
+          onBackedUp={answerBackupReminder}
+        />
+      )}
     </main>
   );
 }
@@ -172,6 +216,24 @@ function UpdateNotice() {
           Restart to update
         </button>
       </div>
+    </div>
+  );
+}
+
+function BackupReminder({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: () => void }) {
+  return (
+    <div className="notice" role="status">
+      <ShieldCheck size={20} aria-hidden />
+      <div className="body">
+        <b>ReelForge was updated</b>
+        <p>Your projects are all still here. A backup keeps them safe if you ever uninstall the app or switch phones.</p>
+        <button className="secondary-btn" onClick={onOpen}>
+          Back up now
+        </button>
+      </div>
+      <button className="icon-btn" style={{ margin: '-10px -10px 0 0' }} aria-label="Dismiss" onClick={onDismiss}>
+        <X size={18} />
+      </button>
     </div>
   );
 }
@@ -358,22 +420,4 @@ function uniqueName(base: string, projects: Project[]): string {
   const names = new Set(projects.map((p) => p.name));
   if (!names.has(base)) return base;
   for (let i = 2; ; i++) if (!names.has(`${base} ${i}`)) return `${base} ${i}`;
-}
-
-const rtf = typeof Intl !== 'undefined' && 'RelativeTimeFormat' in Intl ? new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }) : null;
-
-function ago(ts: number): string {
-  const s = (Date.now() - ts) / 1000;
-  if (s < 60) return 'just now';
-  const steps: [number, Intl.RelativeTimeFormatUnit][] = [
-    [60, 'minute'],
-    [3600, 'hour'],
-    [86400, 'day'],
-    [604800, 'week'],
-  ];
-  if (s >= 2592000) return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  let unit = steps[0];
-  for (const st of steps) if (s >= st[0]) unit = st;
-  const n = Math.floor(s / unit[0]);
-  return rtf ? rtf.format(-n, unit[1]) : `${n} ${unit[1]}${n === 1 ? '' : 's'} ago`;
 }

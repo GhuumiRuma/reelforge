@@ -98,21 +98,41 @@ export const nativeNet: SocialNet = {
 /** Bytes per write when handing files to the native side (base64 grows them by a third). */
 const WRITE_CHUNK = 3 * 1024 * 1024;
 
-async function writeNative(blob: Blob, path: string, directory: 'cache' | 'documents'): Promise<string> {
+/** For writes that can take minutes, like a backup of a whole library. */
+export interface WriteOptions {
+  /** called after each piece with the bytes written so far */
+  onProgress?: (written: number) => void;
+  /** stops the write and removes the part-written file */
+  signal?: AbortSignal;
+}
+
+async function writeNative(blob: Blob, path: string, directory: 'cache' | 'documents', opts: WriteOptions = {}): Promise<string> {
   const { Filesystem, Directory } = await import('@capacitor/filesystem');
   const dir = directory === 'cache' ? Directory.Cache : Directory.Documents;
-  for (let off = 0; off < Math.max(1, blob.size); off += WRITE_CHUNK) {
-    const data = toBase64(new Uint8Array(await blob.slice(off, off + WRITE_CHUNK).arrayBuffer()));
-    if (off === 0) await Filesystem.writeFile({ path, data, directory: dir, recursive: true });
-    else await Filesystem.appendFile({ path, data, directory: dir });
+  const stopIfCancelled = () => {
+    if (opts.signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+  };
+  try {
+    for (let off = 0; off < Math.max(1, blob.size); off += WRITE_CHUNK) {
+      stopIfCancelled();
+      const data = toBase64(new Uint8Array(await blob.slice(off, off + WRITE_CHUNK).arrayBuffer()));
+      if (off === 0) await Filesystem.writeFile({ path, data, directory: dir, recursive: true });
+      else await Filesystem.appendFile({ path, data, directory: dir });
+      opts.onProgress?.(Math.min(blob.size, off + WRITE_CHUNK));
+    }
+    stopIfCancelled();
+  } catch (e) {
+    // A file that stops part-way would sit there looking like a finished one.
+    await Filesystem.deleteFile({ path, directory: dir }).catch(() => undefined);
+    throw e;
   }
   return (await Filesystem.getUri({ path, directory: dir })).uri;
 }
 
 /** Opens the Android share sheet for a file. */
-export async function nativeShare(file: File, title: string): Promise<'shared' | 'cancelled'> {
+export async function nativeShare(file: File, title: string, opts?: WriteOptions): Promise<'shared' | 'cancelled'> {
   const { Share } = await import('@capacitor/share');
-  const uri = await writeNative(file, `share/${file.name}`, 'cache');
+  const uri = await writeNative(file, `share/${file.name}`, 'cache', opts);
   try {
     await Share.share({ title, files: [uri], dialogTitle: title });
     return 'shared';
@@ -123,7 +143,7 @@ export async function nativeShare(file: File, title: string): Promise<'shared' |
 }
 
 /** Saves a file to Documents/ReelForge on the phone and returns where it went. */
-export async function nativeSave(blob: Blob, name: string): Promise<string> {
-  await writeNative(blob, `ReelForge/${name}`, 'documents');
+export async function nativeSave(blob: Blob, name: string, opts?: WriteOptions): Promise<string> {
+  await writeNative(blob, `ReelForge/${name}`, 'documents', opts);
   return `Documents/ReelForge/${name}`;
 }
