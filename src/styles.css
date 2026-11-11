@@ -1317,6 +1317,12 @@ select.input {
   min-height: 52px;
 }
 
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .brand {
   display: flex;
   align-items: center;

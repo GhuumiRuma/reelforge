@@ -113,6 +113,11 @@ export async function listClips(): Promise<{ meta: ClipMeta; poster: Blob | null
   return out;
 }
 
+/** The id of every clip in the library, without loading the files. */
+export async function listClipIds(): Promise<string[]> {
+  return (await db()).getAllKeys('clips');
+}
+
 export async function getClip(id: string): Promise<ClipRecord | undefined> {
   return (await db()).get('clips', id);
 }

@@ -9,6 +9,7 @@
     "preview": "vite preview --host",
     "typecheck": "tsc -p .",
     "build:android": "tsc -p . && CAPACITOR_BUILD=1 vite build && cap sync android",
+    "downloads": "node scripts/download-stats.mjs report",
     "test": "vitest run"
   },
   "dependencies": {

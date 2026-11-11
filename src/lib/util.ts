@@ -72,6 +72,25 @@ export function formatBytes(n: number): string {
   return `${(n / Math.pow(1024, i)).toFixed(i >= 2 ? 1 : 0)} ${u[i]}`;
 }
 
+const rtf = typeof Intl !== 'undefined' && 'RelativeTimeFormat' in Intl ? new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }) : null;
+
+/** "3 hours ago", "yesterday"; a date once it is more than a month back. */
+export function ago(ts: number): string {
+  const s = (Date.now() - ts) / 1000;
+  if (s < 60) return 'just now';
+  const steps: [number, Intl.RelativeTimeFormatUnit][] = [
+    [60, 'minute'],
+    [3600, 'hour'],
+    [86400, 'day'],
+    [604800, 'week'],
+  ];
+  if (s >= 2592000) return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  let unit = steps[0];
+  for (const st of steps) if (s >= st[0]) unit = st;
+  const n = Math.floor(s / unit[0]);
+  return rtf ? rtf.format(-n, unit[1]) : `${n} ${unit[1]}${n === 1 ? '' : 's'} ago`;
+}
+
 export function hexToRgb(hex: string): [number, number, number] {
   let h = hex.replace('#', '').trim();
   if (h.length === 3) h = h.split('').map((c) => c + c).join('');
