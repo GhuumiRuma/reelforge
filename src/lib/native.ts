@@ -129,9 +129,33 @@ async function writeNative(blob: Blob, path: string, directory: 'cache' | 'docum
   return (await Filesystem.getUri({ path, directory: dir })).uri;
 }
 
+/** Share copies older than this are removed the next time something is shared. */
+const SHARE_COPY_KEEP_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The share sheet needs a copy of the file in the app's cache, and the app that receives it may still be
+ * reading that copy long after the sheet closes, so it can't be deleted straight away. Old copies are
+ * cleared before the next share instead, which matters because a backup can be gigabytes.
+ */
+async function removeOldShareCopies(): Promise<void> {
+  const { Filesystem, Directory } = await import('@capacitor/filesystem');
+  try {
+    const { files } = await Filesystem.readdir({ path: 'share', directory: Directory.Cache });
+    const cutoff = Date.now() - SHARE_COPY_KEEP_MS;
+    await Promise.all(
+      files
+        .filter((f) => f.type === 'file' && f.mtime < cutoff)
+        .map((f) => Filesystem.deleteFile({ path: `share/${f.name}`, directory: Directory.Cache }).catch(() => undefined)),
+    );
+  } catch {
+    // Nothing has been shared yet, or the folder can't be listed. Sharing still works.
+  }
+}
+
 /** Opens the Android share sheet for a file. */
 export async function nativeShare(file: File, title: string, opts?: WriteOptions): Promise<'shared' | 'cancelled'> {
   const { Share } = await import('@capacitor/share');
+  await removeOldShareCopies();
   const uri = await writeNative(file, `share/${file.name}`, 'cache', opts);
   try {
     await Share.share({ title, files: [uri], dialogTitle: title });

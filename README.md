@@ -68,7 +68,7 @@ Saved pieces are the same clips as under **Clips** on the home screen, so you ca
 Tap **Back up and restore** at the top of the home screen, next to Appearance.
 
 - **Save a backup** (**Download a backup** in a browser) writes one `.rfbackup` file with your projects and folders, the videos, photos and audio they use, your saved clips and your settings. The sheet shows how big it will be first, and with all your footage in it, it can be large. Turn off **Include videos, photos and clips** for a small file that has only your project layouts and settings.
-- In the Android app the file is saved to `Documents/ReelForge`. Tap **Share a copy** to send it to Google Drive, email or anywhere else, and keep a copy off the phone: a backup that lives only on the phone is lost along with it.
+- In the Android app the file is saved to `Documents/ReelForge`. Tap **Share a copy** to send it to Google Drive, email or anywhere else, and keep a copy off the phone: a backup that lives only on the phone is lost along with it. Sharing makes a temporary copy first, so it needs that much free space again, and the app deletes old temporary copies the next time you share.
 - **Restore from a backup** shows what is in the file before it changes anything. A restore only adds: nothing already in the app is deleted, a project is replaced only when the backup's copy is newer, and a setting is filled in only when it is missing. Restoring the same file again changes nothing.
 - After an update, the Android app asks **Back up now** if it holds projects or clips and you haven't made a backup in the last 7 days.
 
@@ -94,7 +94,7 @@ Good to know:
 
 - Counting starts once this is merged to `main`, because GitHub runs scheduled workflows only from the default branch. Downloads of builds that were already replaced can't be recovered, so the total starts from what the current release has, and the first weekly report covers part of a week.
 - GitHub counts each release file, and `android.yml` replaces the release on every build, which would reset that count. So before it replaces the release, the workflow writes the running total into the new release's notes as a hidden `rf-banked-downloads` comment. Leave that comment in place if you edit the notes.
-- Days run from midnight to midnight UTC. GitHub counts every completed download, so repeat downloads and your own count too. A download that finishes in the few seconds while a release is being replaced may be missed.
+- Days run from midnight to midnight UTC. The numbers come from GitHub's own download counter, so they count downloads, not people, and your own downloads are included. The counter can run several minutes behind, so a download near midnight may show up in the next day, and GitHub may not count every repeat download from the same device. A download that finishes in the few seconds while a release is being replaced may be missed.
 - GitHub pauses scheduled workflows in a public repository after 60 days without activity. If the daily numbers stop, enable the workflow again from the Actions tab.
 
 ## Development

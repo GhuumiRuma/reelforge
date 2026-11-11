@@ -19,7 +19,7 @@ android {
     }
     signingConfigs {
         release {
-            // Set by CI from repository secrets or a cached key; see .github/workflows/android.yml.
+            // Set by CI from the repository's signing secrets (or a one-off key outside main); see .github/workflows/android.yml.
             def ks = System.getenv("ANDROID_KEYSTORE_FILE")
             if (ks) {
                 storeFile file(ks)

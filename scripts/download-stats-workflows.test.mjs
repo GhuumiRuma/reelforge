@@ -21,6 +21,10 @@ describe('download count carried across releases', () => {
     expect(publish.indexOf('download-stats.mjs bank')).toBeLessThan(publish.indexOf('gh release delete'));
   });
 
+  it('lets a run on main finish instead of cancelling it half way through the swap', () => {
+    expect(section(workflow, 'concurrency')).toContain("cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}");
+  });
+
   it('accepts the marker the script writes and nothing else', () => {
     const pattern = publish.match(/grep -Eqx '([^']+)'/)?.[1];
     expect(pattern).toBeTruthy();

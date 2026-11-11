@@ -10,7 +10,9 @@ permissions:
 
 concurrency:
   group: android-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push replaces an older branch build, but main is never cancelled part way: a run stopped between
+  # deleting the old release and creating the new one would lose the download count carried in its notes.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   # SHA-256 fingerprint of the certificate every ReelForge.apk must be signed with (public information).
