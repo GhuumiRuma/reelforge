@@ -57,10 +57,17 @@ export async function nativeFetch(input: RequestInfo | URL, init?: RequestInit):
     readTimeout: 60_000,
   });
   if (init?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  // Asked for an arraybuffer, CapacitorHttp sends the body as base64, except error bodies and anything
+  // labelled JSON: those come back as text, parsed when it is valid JSON. Some of YouTube's JSON starts
+  // with ")]}'", so it stays text.
+  const contentType = Object.entries(res.headers ?? {}).find(([k]) => k.toLowerCase() === 'content-type')?.[1] ?? '';
+  const text = res.status >= 400 || String(contentType).includes('application/json');
   const data: unknown = res.data;
   const bytes =
     typeof data === 'string'
-      ? fromBase64(data)
+      ? text
+        ? new TextEncoder().encode(data)
+        : fromBase64(data)
       : data instanceof ArrayBuffer
         ? new Uint8Array(data)
         : new TextEncoder().encode(typeof data === 'object' ? JSON.stringify(data) : String(data ?? ''));

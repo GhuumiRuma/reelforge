@@ -36,9 +36,15 @@ function innertube(): Promise<Yt> {
       sandboxEval(
         `${data.output}\nreturn process(${JSON.stringify(env.n ?? '')}, ${JSON.stringify(env.sp ?? '')}, ${JSON.stringify(env.sig ?? '')});`,
       );
-    // The session comes from YouTube. With a visitor ID made up on the phone, YouTube answers most
-    // videos with "Sign in to confirm you're not a bot".
-    return Innertube.create({ fetch: anyFetch, retrieve_player: true, generate_session_locally: false });
+    // The session comes from YouTube: with a visitor ID made up on the phone, YouTube answers most
+    // videos with "Sign in to confirm you're not a bot". When YouTube can't be reached, the next search
+    // or download asks again instead of keeping a made-up one.
+    try {
+      return await Innertube.create({ fetch: anyFetch, retrieve_player: true, generate_session_locally: false, fail_fast: true });
+    } catch (e) {
+      console.warn('Could not start a YouTube session', e);
+      throw new YouTubeError('Couldn’t reach YouTube. Check your connection and try again.');
+    }
   })();
   ytp.catch(() => (ytp = null));
   return ytp;
@@ -178,28 +184,23 @@ function pickFormats(adaptive: FormatT[], muxed: FormatT[], o: DownloadOptions):
 }
 
 /**
- * Whether a stream downloads. YouTube can send the first bytes of a stream it won't let you finish,
- * so the end is checked too.
+ * Why a stream won't download, or null when it will. YouTube can send the first bytes of a stream it
+ * won't let you finish, so the end is checked too.
  */
-async function canFetch(url: string, length: number | undefined, signal?: AbortSignal): Promise<boolean> {
+async function refusal(url: string, length: number | undefined, signal?: AbortSignal): Promise<YouTubeError | null> {
   const ranges = length && length > PROBE * 2 ? [`0-${PROBE - 1}`, `${length - PROBE}-${length - 1}`] : [`0-${PROBE - 1}`];
   for (const range of ranges) {
+    let res: Response;
     try {
-      const r = await anyFetch(`${url}&range=${range}`, { signal });
-      if (!r.ok || !(await r.arrayBuffer()).byteLength) return false;
+      res = await anyFetch(`${url}&range=${range}`, { signal });
     } catch (e) {
       if (signal?.aborted) throw e;
-      return false;
+      return new YouTubeError('YouTube refused the download (no connection).');
     }
+    if (!res.ok) return new YouTubeError(`YouTube refused the download (${res.status}).`);
+    if (!(await res.arrayBuffer()).byteLength) return new YouTubeError('YouTube sent an empty file.');
   }
-  return true;
-}
-
-/** What YouTube said about why it won't play a video, worded for this app. */
-function notPlayable(reason: string | undefined): YouTubeError {
-  if (reason && /not a bot/i.test(reason))
-    return new YouTubeError('YouTube thinks this phone might be a bot. Wait a few minutes and try again, or switch between Wi-Fi and mobile data.');
-  return new YouTubeError(reason || 'YouTube won’t play this video here.');
+  return null;
 }
 
 async function fetchStream(url: string, total: number | undefined, mime: string, o: DownloadOptions, step: (got: number) => void): Promise<Blob> {
@@ -232,16 +233,23 @@ async function fetchStream(url: string, total: number | undefined, mime: string,
 /** Downloads a YouTube video (or just its sound) at up to `maxHeight` lines. */
 export async function downloadYouTube(id: string, o: DownloadOptions): Promise<Downloaded> {
   const yt = await innertube();
-  // The first reason YouTube gives for not playing the video, and the last download that went wrong.
-  let reason: YouTubeError | null = null;
+  // Why it failed, most useful first: YouTube's bot check, then the first client that offered the video
+  // but couldn't download it, then the first reason a client gave for not playing it. (A client that
+  // can't play a kind of video, like YouTube Kids for most videos, says little about the video.)
+  let botCheck = false;
   let failed: YouTubeError | null = null;
+  let reason: string | undefined;
+  const notPlayable = (why: string | undefined) => {
+    if (why && /not a bot/i.test(why)) botCheck = true;
+    else reason ??= why;
+  };
   for (const client of CLIENTS) {
     if (o.signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
     try {
       const info = await yt.getBasicInfo(id, { client });
       const status = info.playability_status?.status;
       if (status && status !== 'OK') {
-        reason ??= notPlayable(info.playability_status?.reason);
+        notPlayable(info.playability_status?.reason);
         if (status === 'LOGIN_REQUIRED' || status === 'UNPLAYABLE' || status === 'ERROR') continue;
       }
       const sd = info.streaming_data;
@@ -252,8 +260,13 @@ export async function downloadYouTube(id: string, o: DownloadOptions): Promise<D
       const vUrl = pick.video ? await pick.video.decipher(player) : null;
       const aUrl = pick.audio ? await pick.audio.decipher(player) : null;
       if (!vUrl && !aUrl) continue;
-      if (vUrl && !(await canFetch(vUrl, pick.video?.content_length, o.signal))) continue;
-      if (aUrl && !(await canFetch(aUrl, pick.audio?.content_length, o.signal))) continue;
+      const refused =
+        (vUrl ? await refusal(vUrl, pick.video?.content_length, o.signal) : null) ??
+        (aUrl ? await refusal(aUrl, pick.audio?.content_length, o.signal) : null);
+      if (refused) {
+        failed ??= refused;
+        continue;
+      }
 
       const vLen = pick.video?.content_length;
       const aLen = pick.audio?.content_length;
@@ -276,14 +289,15 @@ export async function downloadYouTube(id: string, o: DownloadOptions): Promise<D
       console.warn(`YouTube client ${client} failed`, e);
       // youtubei.js throws, rather than returns, when YouTube says the video can't be played at all.
       const said = (e as { info?: { status?: string; reason?: string } })?.info;
-      if (said?.status === 'ERROR') reason ??= notPlayable(said.reason);
-      else if (e instanceof YouTubeError) failed = e;
+      if (said?.status === 'ERROR') notPlayable(said.reason);
+      else if (e instanceof YouTubeError) failed ??= e;
     }
   }
+  if (botCheck)
+    throw new YouTubeError('YouTube thinks this phone might be a bot. Wait a few minutes and try again, or switch between Wi-Fi and mobile data.');
   throw (
     failed ??
-    reason ??
-    new YouTubeError('Couldn’t download this video from YouTube. It may be private, age-restricted, or YouTube changed something.')
+    new YouTubeError(reason || 'Couldn’t download this video from YouTube. It may be private, age-restricted, or YouTube changed something.')
   );
 }
 

@@ -83,6 +83,13 @@ describe('downloading from YouTube', () => {
     expect(yt.requests.filter((r) => r.startsWith('/first/'))).toEqual(['/first/video 0-1023', '/first/video 1976-2999', '/first/audio 0-1023', '/first/audio 1976-2999']);
   });
 
+  it('says YouTube refused the download when a client offers the video but won’t send it', async () => {
+    yt.answers.VISIONOS = playable('first');
+    yt.answers.YTKIDS = { playability_status: { status: 'UNPLAYABLE', reason: 'The page needs to be reloaded.' } };
+    yt.cutOff.add('/first/video');
+    await expect(downloadYouTube('abcdefghijk', options)).rejects.toThrow('YouTube refused the download (403).');
+  });
+
   it('says what YouTube said when a video can’t be played at all', async () => {
     yt.answers.VISIONOS = Object.assign(new Error('This video is unavailable'), {
       info: { status: 'ERROR', reason: 'This video has been removed by the uploader' },
