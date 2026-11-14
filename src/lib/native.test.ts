@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { nativeShare } from './native';
+import { nativeFetch, nativeShare } from './native';
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -10,6 +10,17 @@ const fake = vi.hoisted(() => ({
   files: [] as { name: string; type: 'file' | 'directory'; mtime: number }[],
   listFails: false,
   deleteFails: false,
+  requests: [] as { url: string; headers: Record<string, string> }[],
+}));
+
+vi.mock('@capacitor/core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@capacitor/core')>()),
+  CapacitorHttp: {
+    request: async (o: { url: string; headers: Record<string, string> }) => {
+      fake.requests.push(o);
+      return { status: 200, headers: {}, url: o.url, data: '' };
+    },
+  },
 }));
 
 vi.mock('@capacitor/filesystem', () => ({
@@ -67,5 +78,26 @@ describe('sharing a file from the Android app', () => {
     fake.deleteFails = true;
     await expect(nativeShare(file(), 'ReelForge backup')).resolves.toBe('shared');
     expect(fake.log).toEqual(['list share', 'delete share/old.rfbackup', ...newCopy]);
+  });
+});
+
+describe('fetching through the phone’s own networking', () => {
+  it('sends the User-Agent and Referer a WebView Request drops, and leaves cookies to the phone’s cookie jar', async () => {
+    // Android's WebView (Chromium) quietly removes these from a Request; Node keeps them, so remove them here too.
+    class WebViewRequest extends Request {
+      constructor(input: RequestInfo | URL, init?: RequestInit) {
+        super(input, init);
+        for (const h of ['user-agent', 'referer', 'origin', 'cookie']) this.headers.delete(h);
+      }
+    }
+    vi.stubGlobal('Request', WebViewRequest);
+    try {
+      await nativeFetch('https://v.example/clip.mp4', {
+        headers: { 'User-Agent': 'Desktop browser', Referer: 'https://www.tiktok.com/', Cookie: 'made=up', Range: 'bytes=0-9' },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(fake.requests.at(-1)?.headers).toEqual({ 'user-agent': 'Desktop browser', referer: 'https://www.tiktok.com/', range: 'bytes=0-9' });
   });
 });

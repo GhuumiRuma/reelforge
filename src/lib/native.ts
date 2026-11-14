@@ -37,6 +37,13 @@ export async function nativeFetch(input: RequestInfo | URL, init?: RequestInit):
   const req = new Request(input, init);
   const headers: Record<string, string> = {};
   req.headers.forEach((v, k) => (headers[k] = v));
+  // A WebView Request quietly drops headers that browsers set themselves, like User-Agent and Referer.
+  // The phone's networking can send them, and YouTube and TikTok check them. Cookies are left to the
+  // phone's cookie jar, which keeps them between requests as a browser would.
+  if (init?.headers)
+    new Headers(init.headers).forEach((v, k) => {
+      if (k !== 'cookie') headers[k] = v;
+    });
   const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.text();
   if (init?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   const res = await CapacitorHttp.request({

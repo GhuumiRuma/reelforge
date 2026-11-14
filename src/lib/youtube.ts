@@ -3,7 +3,8 @@
  * browser only watching through YouTube's own player is available.
  *
  * YouTube changes how it serves video from time to time, which can break downloading until the
- * youtubei.js dependency is updated.
+ * client list below or the youtubei.js dependency is updated. yt-dlp's player clients are a good
+ * guide to which clients still work.
  */
 import type { Types } from 'youtubei.js/agnostic';
 import { anyFetch, isNative } from './native';
@@ -35,7 +36,9 @@ function innertube(): Promise<Yt> {
       sandboxEval(
         `${data.output}\nreturn process(${JSON.stringify(env.n ?? '')}, ${JSON.stringify(env.sp ?? '')}, ${JSON.stringify(env.sig ?? '')});`,
       );
-    return Innertube.create({ fetch: anyFetch, retrieve_player: true, generate_session_locally: true });
+    // The session comes from YouTube. With a visitor ID made up on the phone, YouTube answers most
+    // videos with "Sign in to confirm you're not a bot".
+    return Innertube.create({ fetch: anyFetch, retrieve_player: true, generate_session_locally: false });
   })();
   ytp.catch(() => (ytp = null));
   return ytp;
@@ -122,9 +125,14 @@ export async function searchYouTube(query: string): Promise<YtVideo[]> {
 // ---------------------------------------------------------------------------
 // Download
 
-/** Clients tried in order; YouTube serves usable links to different ones at different times. */
-const CLIENTS: Types.InnerTubeClient[] = ['ANDROID_VR', 'IOS', 'TV', 'MWEB', 'WEB_EMBEDDED', 'WEB'];
+/**
+ * Clients tried in order. VISIONOS gets links that download to the end without a proof-of-origin
+ * token, but not for videos made for kids, which the YouTube Kids client gets. IOS and MWEB finish
+ * only some videos; for the rest YouTube sends the start and then refuses.
+ */
+const CLIENTS: Types.InnerTubeClient[] = ['VISIONOS', 'YTKIDS', 'IOS', 'MWEB'];
 const CHUNK = 8 * 1024 * 1024;
+const PROBE = 1024;
 
 export interface DownloadOptions {
   kind: 'video' | 'audio';
@@ -169,13 +177,29 @@ function pickFormats(adaptive: FormatT[], muxed: FormatT[], o: DownloadOptions):
   return m ? { video: m, audio: null, muxed: true } : null;
 }
 
-async function probeUrl(url: string, signal?: AbortSignal): Promise<boolean> {
-  try {
-    const r = await anyFetch(`${url}&range=0-1023`, { signal });
-    return r.ok && (await r.arrayBuffer()).byteLength > 0;
-  } catch {
-    return false;
+/**
+ * Whether a stream downloads. YouTube can send the first bytes of a stream it won't let you finish,
+ * so the end is checked too.
+ */
+async function canFetch(url: string, length: number | undefined, signal?: AbortSignal): Promise<boolean> {
+  const ranges = length && length > PROBE * 2 ? [`0-${PROBE - 1}`, `${length - PROBE}-${length - 1}`] : [`0-${PROBE - 1}`];
+  for (const range of ranges) {
+    try {
+      const r = await anyFetch(`${url}&range=${range}`, { signal });
+      if (!r.ok || !(await r.arrayBuffer()).byteLength) return false;
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      return false;
+    }
   }
+  return true;
+}
+
+/** What YouTube said about why it won't play a video, worded for this app. */
+function notPlayable(reason: string | undefined): YouTubeError {
+  if (reason && /not a bot/i.test(reason))
+    return new YouTubeError('YouTube thinks this phone might be a bot. Wait a few minutes and try again, or switch between Wi-Fi and mobile data.');
+  return new YouTubeError(reason || 'YouTube won’t play this video here.');
 }
 
 async function fetchStream(url: string, total: number | undefined, mime: string, o: DownloadOptions, step: (got: number) => void): Promise<Blob> {
@@ -208,14 +232,16 @@ async function fetchStream(url: string, total: number | undefined, mime: string,
 /** Downloads a YouTube video (or just its sound) at up to `maxHeight` lines. */
 export async function downloadYouTube(id: string, o: DownloadOptions): Promise<Downloaded> {
   const yt = await innertube();
-  let lastError: unknown = null;
+  // The first reason YouTube gives for not playing the video, and the last download that went wrong.
+  let reason: YouTubeError | null = null;
+  let failed: YouTubeError | null = null;
   for (const client of CLIENTS) {
     if (o.signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
     try {
       const info = await yt.getBasicInfo(id, { client });
       const status = info.playability_status?.status;
       if (status && status !== 'OK') {
-        lastError = new YouTubeError(info.playability_status?.reason || 'YouTube won’t play this video here.');
+        reason ??= notPlayable(info.playability_status?.reason);
         if (status === 'LOGIN_REQUIRED' || status === 'UNPLAYABLE' || status === 'ERROR') continue;
       }
       const sd = info.streaming_data;
@@ -225,8 +251,9 @@ export async function downloadYouTube(id: string, o: DownloadOptions): Promise<D
       const player = yt.session.player;
       const vUrl = pick.video ? await pick.video.decipher(player) : null;
       const aUrl = pick.audio ? await pick.audio.decipher(player) : null;
-      const first = vUrl ?? aUrl;
-      if (!first || !(await probeUrl(first, o.signal))) continue;
+      if (!vUrl && !aUrl) continue;
+      if (vUrl && !(await canFetch(vUrl, pick.video?.content_length, o.signal))) continue;
+      if (aUrl && !(await canFetch(aUrl, pick.audio?.content_length, o.signal))) continue;
 
       const vLen = pick.video?.content_length;
       const aLen = pick.audio?.content_length;
@@ -247,12 +274,17 @@ export async function downloadYouTube(id: string, o: DownloadOptions): Promise<D
     } catch (e) {
       if (o.signal?.aborted || (e as Error)?.name === 'AbortError') throw e;
       console.warn(`YouTube client ${client} failed`, e);
-      lastError = e;
+      // youtubei.js throws, rather than returns, when YouTube says the video can't be played at all.
+      const said = (e as { info?: { status?: string; reason?: string } })?.info;
+      if (said?.status === 'ERROR') reason ??= notPlayable(said.reason);
+      else if (e instanceof YouTubeError) failed = e;
     }
   }
-  throw lastError instanceof YouTubeError
-    ? lastError
-    : new YouTubeError('Couldn’t download this video from YouTube. It may be private, age-restricted, or YouTube changed something.');
+  throw (
+    failed ??
+    reason ??
+    new YouTubeError('Couldn’t download this video from YouTube. It may be private, age-restricted, or YouTube changed something.')
+  );
 }
 
 /** Video title and length without downloading, for links opened in the app. */
