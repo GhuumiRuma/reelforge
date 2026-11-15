@@ -1,0 +1,102 @@
+ReelForge License, version 1.0
+
+Copyright (c) 2026 GhuumiRuma (the "Licensor")
+
+
+1. Permission
+
+Permission is granted, free of charge, to any person obtaining a copy of
+ReelForge and its associated files (the "Software") to use, copy, modify,
+merge, publish and distribute the Software, subject to the conditions in
+this license.
+
+Anyone who receives the Software from you, with or without your changes,
+gets a license from the Licensor directly on these same terms. You may not
+sublicense the Software or license it on other terms.
+
+
+2. Notices
+
+You must include this license, the copyright notice above and the Commons
+Clause notice in section 3 with all copies or substantial portions of the
+Software.
+
+
+3. No selling
+
+"Commons Clause" License Condition v1.0
+
+The Software is provided to you by the Licensor under the License, as
+defined below, subject to the following condition.
+
+Without limiting other conditions in the License, the grant of rights under
+the License will not include, and the License does not grant to you, the
+right to Sell the Software.
+
+For purposes of the foregoing, "Sell" means practicing any or all of the
+rights granted to you under the License to provide to third parties, for a
+fee or other consideration (including without limitation fees for hosting
+or consulting/ support services related to the Software), a product or
+service whose value derives, entirely or substantially, from the
+functionality of the Software. Any license notice or attribution required
+by the License must also include this Commons Clause License Condition
+notice.
+
+Software: ReelForge
+License: ReelForge License, version 1.0 (this document)
+Licensor: GhuumiRuma
+
+Making, editing or publishing videos or other content with the Software is
+not Selling, even if you are paid for that content or it earns ad revenue.
+
+
+4. Acceptable use
+
+You may not use the Software, or a work based on it, for a purpose that
+promotes, encourages or carries out discrimination, harassment or violence
+against people because of a protected characteristic. Protected
+characteristics include gender identity, gender expression, transgender or
+nonbinary status, intersex status, sex, sexual orientation, race, color,
+ethnicity, national origin, religion, caste, age and disability. This covers
+making, editing or publishing content with the Software, and running a
+service built on it, for that purpose.
+
+Reporting on, documenting, teaching about or criticizing discrimination is
+not a violation.
+
+If you give the Software or a work based on it to anyone, you must pass this
+section on.
+
+
+5. Third-party components
+
+The Software includes and uses third-party components under their own
+licenses, described in THIRD_PARTY_NOTICES.md and listed in
+package-lock.json. They stay under those licenses. Nothing in this license
+limits the rights those licenses give you, including the right to modify or
+replace a component and to reverse engineer the Software to debug your own
+modifications.
+
+
+6. Names and logos
+
+This license does not give you the right to use the ReelForge name, logo or
+icons, except to say where the Software came from.
+
+
+7. Ending
+
+If you break these terms, your license ends automatically. The Licensor can
+reinstate it in writing. People who received the Software from you keep
+their own licenses for as long as they follow these terms.
+
+
+8. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

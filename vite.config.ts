@@ -1,4 +1,5 @@
-import { defineConfig } from 'vite';
+import { readFileSync } from 'node:fs';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
@@ -8,11 +9,27 @@ const BASE = process.env.CAPACITOR_BUILD ? '/' : '/reelforge/';
 // Which commit this build is made from. The app compares it with the one it last ran as, to notice an update.
 const BUILD_ID = (process.env.GITHUB_SHA ?? '').slice(0, 12) || 'dev';
 
+// The license and its third-party notices live once, at the repository root, and ship with every build:
+// the website serves them next to index.html and the Android app carries them in its assets.
+const LEGAL_FILES = ['LICENSE', 'THIRD_PARTY_NOTICES.md'];
+
+function legalFiles(): Plugin {
+  return {
+    name: 'rf-legal-files',
+    generateBundle() {
+      for (const fileName of LEGAL_FILES) {
+        this.emitFile({ type: 'asset', fileName, source: readFileSync(new URL(`./${fileName}`, import.meta.url), 'utf8') });
+      }
+    },
+  };
+}
+
 export default defineConfig({
   base: BASE,
   define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   plugins: [
     react(),
+    legalFiles(),
     VitePWA({
       registerType: 'prompt',
       injectRegister: null,
@@ -44,6 +61,8 @@ export default defineConfig({
         globIgnores: ['**/captions.worker*', '**/*.wasm'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
+        // The legal files are plain files next to index.html, not app screens, so they open as themselves.
+        navigateFallbackDenylist: [/\/(LICENSE|THIRD_PARTY_NOTICES\.md)(\?.*)?$/],
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.endsWith('.woff2') || url.pathname.endsWith('.woff'),
