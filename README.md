@@ -4,14 +4,15 @@
 
 | Yesterday | Last 7 days | Last 30 days |
 | ---: | ---: | ---: |
-| 1 | 21 | 21 |
+| 1 | 22 | 22 |
 
-Counting since Thu 12 Nov 2026, so the longer periods only cover the days since then. Updated Wed 18 Nov 2026 at 07:22 UTC. Days run from midnight to midnight UTC. Each finished week is also posted as an [issue](https://github.com/GhuumiRuma/reelforge/issues?q=label%3Adownload-report).
+Counting since Thu 12 Nov 2026, so the longer periods only cover the days since then. Updated Thu 19 Nov 2026 at 07:20 UTC. Days run from midnight to midnight UTC. Each finished week is also posted as an [issue](https://github.com/GhuumiRuma/reelforge/issues?q=label%3Adownload-report).
 
 ## Last 30 days
 
 | Day | Downloads | |
 | --- | ---: | --- |
+| Wed 18 Nov | 1 | ██ |
 | Tue 17 Nov | 1 | ██ |
 | Mon 16 Nov | 1 | ██ |
 | Sun 15 Nov | 4 | ██████████ |
@@ -41,7 +42,6 @@ Counting since Thu 12 Nov 2026, so the longer periods only cover the days since 
 | Thu 22 Oct | – |  |
 | Wed 21 Oct | – |  |
 | Tue 20 Oct | – |  |
-| Mon 19 Oct | – |  |
 
 \* Counting started part-way through this day.
 
