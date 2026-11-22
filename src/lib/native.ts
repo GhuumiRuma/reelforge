@@ -1,8 +1,10 @@
 /**
- * Glue for the Android app (Capacitor). In a browser every function here falls back to the web
- * behavior, so the same build runs everywhere.
+ * Glue for the Android app (Capacitor), and for an app that hosts ReelForge and brings its own
+ * networking (see hostNetwork.ts). In a browser every function here falls back to the web behavior,
+ * so the same build runs everywhere.
  */
 import { Capacitor, CapacitorHttp, SystemBars, SystemBarsStyle } from '@capacitor/core';
+import { hostNetwork, type HostNetwork, type HostResponse } from './hostNetwork';
 import type { SocialNet } from './social';
 
 export const isNative = (): boolean => Capacitor.isNativePlatform();
@@ -29,28 +31,34 @@ function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-/**
- * fetch() through the phone's own networking, which isn't limited by browser CORS rules.
- * Only used in the Android app; request bodies must be text (JSON, form data as a string).
- */
-export async function nativeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+/** A request as plain data, for networking outside the web view. Bodies must be text (JSON, form data as a string). */
+async function describe(input: RequestInfo | URL, init?: RequestInit) {
   const req = new Request(input, init);
   const headers: Record<string, string> = {};
   req.headers.forEach((v, k) => (headers[k] = v));
   // A WebView Request quietly drops headers that browsers set themselves, like User-Agent and Referer.
-  // The phone's networking can send them, and YouTube and TikTok check them. Cookies are left to the
-  // phone's cookie jar, which keeps them between requests as a browser would.
+  // Networking outside the web view can send them, and YouTube and TikTok check them. Cookies are left to
+  // the cookie jar on that side, which keeps them between requests as a browser would.
   if (init?.headers)
     new Headers(init.headers).forEach((v, k) => {
       if (k !== 'cookie') headers[k] = v;
     });
   const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await req.text();
+  return { url: req.url, method: req.method, headers, body: body || undefined, signal: req.signal };
+}
+
+/**
+ * fetch() through the phone's own networking, which isn't limited by browser CORS rules.
+ * Only used in the Android app; request bodies must be text (JSON, form data as a string).
+ */
+export async function nativeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const { url, method, headers, body } = await describe(input, init);
   if (init?.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   const res = await CapacitorHttp.request({
-    url: req.url,
-    method: req.method,
+    url,
+    method,
     headers,
-    data: body || undefined,
+    data: body,
     responseType: 'arraybuffer',
     shouldEncodeUrlParams: false,
     connectTimeout: 20_000,
@@ -71,24 +79,70 @@ export async function nativeFetch(input: RequestInfo | URL, init?: RequestInit):
       : data instanceof ArrayBuffer
         ? new Uint8Array(data)
         : new TextEncoder().encode(typeof data === 'object' ? JSON.stringify(data) : String(data ?? ''));
-  const nullBody = res.status === 204 || res.status === 304 || req.method === 'HEAD';
+  const nullBody = res.status === 204 || res.status === 304 || method === 'HEAD';
   const response = new Response(nullBody ? null : bytes, { status: res.status, headers: res.headers });
-  Object.defineProperty(response, 'url', { value: res.url || req.url });
+  Object.defineProperty(response, 'url', { value: res.url || url });
+  return response;
+}
+
+/**
+ * fetch() through the app that hosts ReelForge. The body is read as it arrives, so a large download
+ * isn't held in one piece on the way.
+ */
+async function hostFetch(host: HostNetwork, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const { url, method, headers, body, signal } = await describe(input, init);
+  if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+  const res = await host.request({ url, method, headers, body }, signal);
+  return toResponse(res, url, method);
+}
+
+const lowerCased = (headers: Record<string, unknown>): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) out[k.toLowerCase()] = String(v);
+  return out;
+};
+
+function toResponse(res: HostResponse, url: string, method: string): Response {
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(res.headers)) {
+    // Cookies stay with the host, as they stay with the phone, and a web page can't read them anyway.
+    if (k.toLowerCase() === 'set-cookie') continue;
+    try {
+      headers.append(k, v);
+    } catch {
+      // A header that fetch can't carry is dropped.
+    }
+  }
+  const nullBody = res.status === 204 || res.status === 205 || res.status === 304 || method === 'HEAD';
+  if (nullBody) void res.body?.cancel().catch(() => undefined);
+  // A status text with anything but printable characters would make the Response throw.
+  const statusText = /^[\t\x20-\x7e\x80-\xff]*$/.test(res.statusText) ? res.statusText : '';
+  const response = new Response(nullBody ? null : res.body, { status: res.status, statusText, headers });
+  Object.defineProperty(response, 'url', { value: res.url || url });
   return response;
 }
 
 /** fetch() that works for any http(s) link: native in the app, normal fetch in a browser. */
 export function anyFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const host = hostNetwork();
+  if (host) return hostFetch(host, input, init);
   return isNative() ? nativeFetch(input, init) : fetch(input, init);
 }
 
 /**
- * Networking for TikTok and Instagram downloads in the Android app. Android keeps cookies between
- * requests on its own (Capacitor installs a cookie manager), as a browser would.
+ * Networking for TikTok and Instagram downloads in the Android app, or through the app that hosts
+ * ReelForge. Both keep cookies between requests on their own, as a browser would (Android through
+ * the cookie manager Capacitor installs).
  */
 export const nativeNet: SocialNet = {
   async text(url, init = {}) {
-    if (!isNative()) throw new TypeError('Only the Android app can reach this site.');
+    const host = hostNetwork();
+    if (host) {
+      const res = await host.request({ url, method: init.method ?? 'GET', headers: init.headers ?? {}, body: init.body }, init.signal);
+      const text = res.body ? await new Response(res.body).text() : '';
+      return { status: res.status, url: res.url || url, headers: lowerCased(res.headers), text };
+    }
+    if (!isNative()) throw new TypeError('Only an app can reach this site, not a browser.');
     if (init.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const res = await CapacitorHttp.request({
       url,
@@ -101,12 +155,14 @@ export const nativeNet: SocialNet = {
       readTimeout: 60_000,
     });
     if (init.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    const headers: Record<string, string> = {};
-    for (const [k, v] of Object.entries(res.headers ?? {})) headers[k.toLowerCase()] = String(v);
     const data: unknown = res.data;
-    return { status: res.status, url: res.url || url, headers, text: typeof data === 'string' ? data : JSON.stringify(data ?? '') };
+    return { status: res.status, url: res.url || url, headers: lowerCased(res.headers ?? {}), text: typeof data === 'string' ? data : JSON.stringify(data ?? '') };
   },
-  bytes: (url, init = {}) => nativeFetch(url, { method: init.method, headers: init.headers, body: init.body, signal: init.signal }),
+  bytes: (url, init = {}) => {
+    const request = { method: init.method, headers: init.headers, body: init.body, signal: init.signal };
+    const host = hostNetwork();
+    return host ? hostFetch(host, url, request) : nativeFetch(url, request);
+  },
 };
 
 /** Bytes per write when handing files to the native side (base64 grows them by a third). */

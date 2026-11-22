@@ -1,5 +1,6 @@
 /**
- * TikTok and Instagram downloads for the Android app. Browsers block these requests (CORS).
+ * TikTok and Instagram downloads for the Android app, and for an app that hosts ReelForge and brings
+ * its own networking (see hostNetwork.ts). Browsers block these requests (CORS).
  *
  * Both sites change their pages from time to time, which can break downloading until this file is
  * updated. Only public posts work; nothing here signs in.
