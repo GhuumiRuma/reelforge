@@ -36,6 +36,7 @@ import {
 import { listClips, listFolders, putClip, putFolder, requestPersistence } from '../lib/db';
 import { acquireWakeLock, pickFiles } from '../lib/device';
 import { haptic } from '../lib/haptics';
+import { hasHostNetwork } from '../lib/hostNetwork';
 import { probe } from '../lib/media';
 import { anyFetch, nativeNet } from '../lib/native';
 import { downloadSocial, parseSocialLink, SITE_NAMES, SocialError, type SocialLink } from '../lib/social';
@@ -94,7 +95,8 @@ export function Studio() {
   const [crop, setCrop] = useState<CropRect>(FULL_CROP);
   const [name, setName] = useState('');
   const [folders, setFolders] = useState<ClipFolder[]>([]);
-  const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs<Prefs>(PREFS_KEY, { quality: 720, folderId: null }));
+  // A computer has room for the best the downloader can get; a phone starts lower to spare its memory.
+  const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs<Prefs>(PREFS_KEY, { quality: hasHostNetwork() ? 1080 : 720, folderId: null }));
   const [busy, setBusy] = useState<Busy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ name: string; size: number } | null>(null);
@@ -628,7 +630,7 @@ export function Studio() {
               </button>
               <p className="note">
                 {native
-                  ? 'The whole video is downloaded to this phone once; then you can save as many clips from it as you like. Only clip videos you own or have permission to use.'
+                  ? 'The whole video is downloaded to this device once; then you can save as many clips from it as you like. Only clip videos you own or have permission to use.'
                   : 'Downloading from YouTube works in the Android app. In a browser you can still watch and mark the times.'}
               </p>
             </>
@@ -747,7 +749,7 @@ export function Studio() {
           <b>Make a clip</b>
           <span>
             {native
-              ? 'Search YouTube, paste a YouTube, TikTok or Instagram link, or tap the folder button to clip a video or song from this phone.'
+              ? 'Search YouTube, paste a YouTube, TikTok or Instagram link, or tap the folder button to clip a video or song from this device.'
               : 'Paste a YouTube link to watch it, or tap the folder button to clip a video or song from this device.'}
           </span>
           <button className="secondary-btn" onClick={fromDevice}>

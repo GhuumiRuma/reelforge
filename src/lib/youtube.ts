@@ -1,12 +1,14 @@
 /**
- * YouTube search and download for the Android app. Browsers block these requests (CORS), so in a
- * browser only watching through YouTube's own player is available.
+ * YouTube search and download for the Android app, and for an app that hosts ReelForge and brings its
+ * own networking (see hostNetwork.ts). Browsers block these requests (CORS), so in a browser only
+ * watching through YouTube's own player is available.
  *
  * YouTube changes how it serves video from time to time, which can break downloading until the
  * client list below or the youtubei.js dependency is updated. yt-dlp's player clients are a good
  * guide to which clients still work.
  */
 import type { Types } from 'youtubei.js/agnostic';
+import { hasHostNetwork } from './hostNetwork';
 import { anyFetch, isNative } from './native';
 
 export interface YtVideo {
@@ -21,7 +23,7 @@ export interface YtVideo {
 
 export class YouTubeError extends Error {}
 
-export const canUseYouTubeApi = (): boolean => isNative();
+export const canUseYouTubeApi = (): boolean => isNative() || hasHostNetwork();
 
 type Yt = import('youtubei.js/agnostic').Innertube;
 type FormatT = import('youtubei.js/agnostic').Misc.Format;
@@ -294,7 +296,11 @@ export async function downloadYouTube(id: string, o: DownloadOptions): Promise<D
     }
   }
   if (botCheck)
-    throw new YouTubeError('YouTube thinks this phone might be a bot. Wait a few minutes and try again, or switch between Wi-Fi and mobile data.');
+    throw new YouTubeError(
+      isNative()
+        ? 'YouTube thinks this phone might be a bot. Wait a few minutes and try again, or switch between Wi-Fi and mobile data.'
+        : 'YouTube thinks this computer might be a bot. Wait a few minutes and try again, or try another network.',
+    );
   throw (
     failed ??
     new YouTubeError(reason || 'Couldn’t download this video from YouTube. It may be private, age-restricted, or YouTube changed something.')

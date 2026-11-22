@@ -5,6 +5,7 @@ import { answerReminder, reminderForThisLaunch } from '../lib/backupReminder';
 import { deleteProject, listProjects, requestPersistence, saveProject, storageInfo } from '../lib/db';
 import { newProject } from '../lib/defaults';
 import { canEncodeVideo, pickFiles } from '../lib/device';
+import { hasHostNetwork } from '../lib/hostNetwork';
 import { projectDuration } from '../lib/layout';
 import { ensureThumbs, getThumbStrip, mediaEvents } from '../lib/media';
 import { openProject, openStudio } from '../lib/route';
@@ -140,7 +141,7 @@ export function Home() {
           <Scissors size={26} aria-hidden />
           <span>
             <b>Clip studio</b>
-            <small>{isNativeApp() ? 'YouTube, links and files' : 'Links and files'}</small>
+            <small>{isNativeApp() || hasHostNetwork() ? 'YouTube, links and files' : 'Links and files'}</small>
           </span>
         </button>
       </div>

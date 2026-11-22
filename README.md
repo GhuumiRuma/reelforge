@@ -6,7 +6,7 @@ A full video editor for content creators that runs on your phone. Edit, caption 
 
 ## Install it on your phone
 
-- **Android app (Samsung and other Android phones):** on the phone, open the [Latest Android app release](https://github.com/GhuumiRuma/reelforge/releases/tag/android-latest) and tap **ReelForge.apk**. Open the downloaded file and tap **Install**. The first time, Android asks you to allow installs from your browser (on Samsung: **Settings → Apps → Special access → Install unknown apps**). New versions install right over the old one and keep your projects and clips, so don't uninstall first (see [Updating the Android app](#updating-the-android-app)). Only the Android app can search and download from YouTube, or download from TikTok and Instagram.
+- **Android app (Samsung and other Android phones):** on the phone, open the [Latest Android app release](https://github.com/GhuumiRuma/reelforge/releases/tag/android-latest) and tap **ReelForge.apk**. Open the downloaded file and tap **Install**. The first time, Android asks you to allow installs from your browser (on Samsung: **Settings → Apps → Special access → Install unknown apps**). New versions install right over the old one and keep your projects and clips, so don't uninstall first (see [Updating the Android app](#updating-the-android-app)). Only the Android app, and a desktop app that hosts ReelForge with its own networking (see [Hosting ReelForge in another app](#hosting-reelforge-in-another-app)), can search and download from YouTube, or download from TikTok and Instagram.
 - **iPhone:** open the link in Safari, tap **Share**, then **Add to Home Screen**.
 - **Android, desktop or any browser:** open the link in Chrome, tap the **⋮** menu, then **Install app** (or **Add to Home screen**).
 
@@ -43,10 +43,10 @@ If Android says **App not installed** because the app **conflicts with an existi
 
 Tap **Clip studio** on the home screen to watch, search and clip on one screen.
 
-1. **Find a video.** In the Android app, type in the search box to search YouTube, or paste a YouTube, TikTok or Instagram link. TikTok and Instagram videos download straight away (public posts only; for an Instagram carousel, the link's `img_index` picks the item, otherwise its first video). In any browser you can paste a YouTube link to watch it, paste a direct link to a video or audio file, or tap the folder button to open a file from your device.
+1. **Find a video.** In the Android app (or a desktop app that hosts ReelForge), type in the search box to search YouTube, or paste a YouTube, TikTok or Instagram link. TikTok and Instagram videos download straight away (public posts only; for an Instagram carousel, the link's `img_index` picks the item, otherwise its first video). In any browser you can paste a YouTube link to watch it, paste a direct link to a video or audio file, or tap the folder button to open a file from your device.
 2. **Mark the clip.** Play the video and tap **Now** to set the start and end, or type the times. Tap **Play the clip** to check it.
 3. **Choose video or audio,** and pick a crop shape (9:16, 1:1, 4:5, 16:9 or free). Drag the box to move it; drag its corner to resize it.
-4. **YouTube videos** download first (Android app only): pick 360p, 720p or 1080p and tap **Download to crop and clip**. Your start and end stay marked.
+4. **YouTube videos** download first (Android app and host apps only): pick 360p, 720p or 1080p and tap **Download to crop and clip**. Your start and end stay marked.
 5. **Name it, pick a folder and tap Save.** Video clips are saved as MP4 and audio clips as .m4a (or .wav).
 
 Saved clips appear under **Clips** on the home screen. There you can make folders, filter by video or audio, search, play, share, save to the device (Documents/ReelForge in the Android app), rename, move, delete, or open a clip in a new editing project. While you edit, the same clips are in **My clips** (see below).
@@ -135,6 +135,10 @@ Android installs a new APK over an installed app only when both are signed with 
 - To move to a new key on purpose, change the secrets and `EXPECTED_CERT_SHA256` together. Everyone who has the app will then have to uninstall once, so tell them to make a backup first.
 - A fork has no secrets, so its builds use a one-off key. That APK installs on a phone that has no ReelForge, but it can't update an installed copy.
 - `capacitor.config.ts` pins the app's origin to `https://localhost`. The browser engine files a page's storage under its origin, so a different one would hide everyone's projects after an update. The manifest sets `hasFragileUserData`, so Android 10 and later asks whether to keep the app's data when someone uninstalls it.
+
+### Hosting ReelForge in another app
+
+A desktop app that shows ReelForge in a web view can give it the same reach as the Android app. Before ReelForge starts, the host calls `registerHostNetwork()` from `src/lib/hostNetwork.ts` with an object whose `request()` makes an HTTP request for the page, skipping browser CORS rules and sending headers like User-Agent and Referer, and returns the status, headers and a stream of the body. Search and download from YouTube, TikTok and Instagram then switch on, as they do in the Android app. The host keeps cookies between requests, and decides which addresses a page may reach. Without a host, nothing changes. Stream Studio's editor window does this.
 
 Built with React, TypeScript, Vite, [Mediabunny](https://mediabunny.dev) (WebCodecs), WebGL2 and [Transformers.js](https://huggingface.co/docs/transformers.js) (Whisper).
 
