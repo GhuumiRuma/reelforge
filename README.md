@@ -1,17 +1,18 @@
 # ReelForge download stats
 
-**28 downloads** of the Android app so far.
+**29 downloads** of the Android app so far.
 
 | Yesterday | Last 7 days | Last 30 days |
 | ---: | ---: | ---: |
-| 1 | 8 | 23 |
+| 1 | 5 | 24 |
 
-Counting since Thu 12 Nov 2026, so the longer periods only cover the days since then. Updated Sun 22 Nov 2026 at 06:41 UTC. Days run from midnight to midnight UTC. Each finished week is also posted as an [issue](https://github.com/GhuumiRuma/reelforge/issues?q=label%3Adownload-report).
+Counting since Thu 12 Nov 2026, so the longer periods only cover the days since then. Updated Mon 23 Nov 2026 at 07:30 UTC. Days run from midnight to midnight UTC. Each finished week is also posted as an [issue](https://github.com/GhuumiRuma/reelforge/issues?q=label%3Adownload-report).
 
 ## Last 30 days
 
 | Day | Downloads | |
 | --- | ---: | --- |
+| Sun 22 Nov | 1 | ██ |
 | Sat 21 Nov | 1 | ██ |
 | Fri 20 Nov | 0 |  |
 | Thu 19 Nov | 0 |  |
@@ -41,7 +42,6 @@ Counting since Thu 12 Nov 2026, so the longer periods only cover the days since 
 | Mon 26 Oct | – |  |
 | Sun 25 Oct | – |  |
 | Sat 24 Oct | – |  |
-| Fri 23 Oct | – |  |
 
 \* Counting started part-way through this day.
 
@@ -49,4 +49,5 @@ Counting since Thu 12 Nov 2026, so the longer periods only cover the days since 
 
 | Week | Downloads | Change |
 | --- | ---: | ---: |
+| Mon 16 Nov 2026 | 5 |  |
 | Mon 9 Nov 2026 (part) | 19 |  |
