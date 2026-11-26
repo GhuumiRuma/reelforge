@@ -29,6 +29,7 @@ Everything happens on the phone: editing, speech-to-text captions and encoding a
 
 - Built as a PWA (React, WebCodecs via Mediabunny, WebGL2 compositing), hosted on GitHub Pages at `/reelforge/`.
 - Projects and media are stored in the browser's IndexedDB on the device; clearing site data deletes them.
+- Features still being tried live in the Experimental features section (`src/experimental/`). Only the separate ReelForge Experimental Android app contains them, and only the owner downloads it, from the admin section of the owner's website. The public website and APK never include them: their builds stop if experimental code would end up in them.
 - iOS Safari limits: no background export, memory ceilings on long or 4K exports, and some codecs depend on OS version.
 - Appearance reaches the app's own screens only. The app icon, the Android launcher and splash screen, the installed web app's frame and splash color (the PWA manifest) and the Android WebView's background before the page loads stay dark (`#0b0b0f`), and the Android status and navigation bar icons follow Light or Dark but not the Style or Accent. The iOS standalone status-bar strip and the Android bars have not been tested on a real device.
 - Terminology follows creator editors: clip, split, trim, speed, volume, canvas, overlay, captions, transitions, keyframes, export.

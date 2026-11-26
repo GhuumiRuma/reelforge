@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!-- The name of ReelForge Experimental, the experimental build type in android/app/build.gradle. These replace
+     the strings of the same name in src/main/res, for that build only. -->
+<resources>
+    <string name="app_name">ReelForge Experimental</string>
+    <string name="title_activity_main">ReelForge Experimental</string>
+</resources>

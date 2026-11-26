@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { defineConfig, type Plugin } from 'vite';
+import { fileURLToPath } from 'node:url';
+import { defineConfig, normalizePath, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
@@ -8,6 +9,31 @@ const BASE = process.env.CAPACITOR_BUILD ? '/' : '/reelforge/';
 
 // Which commit this build is made from. The app compares it with the one it last ran as, to notice an update.
 const BUILD_ID = (process.env.GITHUB_SHA ?? '').slice(0, 12) || 'dev';
+
+// The Experimental features section (src/experimental) goes only into ReelForge Experimental, built with
+// `--mode experimental`. Every other build, the public website and APK included, gets src/experimental/off.ts for
+// `@experimental`, and experimentalOnly() stops it if any other file from that folder would still end up in it.
+export const EXPERIMENTAL_MODE = 'experimental';
+
+export function experimentalOnly(): Plugin {
+  let section = '';
+  return {
+    name: 'rf-experimental-only',
+    apply: (_, { command, mode }) => command === 'build' && mode !== EXPERIMENTAL_MODE,
+    configResolved(config) {
+      section = `${normalizePath(config.root)}/src/experimental/`;
+    },
+    load(id) {
+      const file = normalizePath(id.split('?')[0]);
+      if (file.startsWith(section) && file !== `${section}off.ts`) {
+        this.error(
+          `src/experimental/${file.slice(section.length)} is experimental, so only the experimental build (--mode experimental) may include it. The rest of the app reaches that section only through '@experimental'.`,
+        );
+      }
+      return null;
+    },
+  };
+}
 
 // The license and its third-party notices live once, at the repository root, and ship with every build:
 // the website serves them next to index.html and the Android app carries them in its assets.
@@ -24,12 +50,21 @@ function legalFiles(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   base: BASE,
   define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
+  resolve: {
+    alias: [
+      {
+        find: /^@experimental$/,
+        replacement: fileURLToPath(new URL(`./src/experimental/${mode === EXPERIMENTAL_MODE ? 'index' : 'off'}.ts`, import.meta.url)),
+      },
+    ],
+  },
   plugins: [
     react(),
     legalFiles(),
+    experimentalOnly(),
     VitePWA({
       registerType: 'prompt',
       injectRegister: null,
@@ -83,4 +118,4 @@ export default defineConfig({
     target: 'es2022',
     chunkSizeWarningLimit: 6000,
   },
-});
+}));

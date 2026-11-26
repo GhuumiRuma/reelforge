@@ -14,7 +14,10 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "types": ["vite/client", "vite-plugin-pwa/client"]
+    "types": ["vite/client", "vite-plugin-pwa/client"],
+    // Type-checked against the experimental build's section; vite.config.ts swaps in src/experimental/off.ts,
+    // which has the same shape, for every other build.
+    "paths": { "@experimental": ["./src/experimental/index.ts"] }
   },
   "include": ["src", "vite.config.ts"]
 }

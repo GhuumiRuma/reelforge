@@ -103,11 +103,31 @@ Good to know:
 - Days run from midnight to midnight UTC. The numbers come from GitHub's own download counter, so they count downloads, not people, and your own downloads are included. The counter can run several minutes behind, so a download near midnight may show up in the next day, and GitHub may not count every repeat download from the same device. A download that finishes in the few seconds while a release is being replaced may be missed.
 - GitHub pauses scheduled workflows in a public repository after 60 days without activity. If the daily numbers stop, enable the workflow again from the Actions tab.
 
+## Experimental features
+
+Features that are still being tried live in the **Experimental features** section, [`src/experimental`](src/experimental). Only a separate Android app, **ReelForge Experimental**, contains them. The website and the public `ReelForge.apk` don't: their builds stop if any experimental code would end up in them. This repository is public, so the code itself can still be read here.
+
+- **Get the app:** sign in to your website's admin section and tap **Download** under **ReelForge experimental**. It installs next to ReelForge and keeps its own projects, clips and settings. To bring your work over, [make a backup](#back-up-and-restore) in ReelForge and restore it in ReelForge Experimental. Each new build installs over the one before it.
+- **See what's in it:** tap the flask at the top of its home screen.
+- **Try it on your computer:** run `npm run dev:experimental`.
+- **Add a feature:** see [`src/experimental/README.md`](src/experimental/README.md).
+
+`.github/workflows/experimental.yml` builds the app on every push to `main`. It's signed with the same permanent key as ReelForge, and the workflow checks that its package is `io.github.monicariverawork.reelforge.experimental`, so it can never install over ReelForge. The APK never goes into a release or a workflow artifact, because both would be public here. Instead the workflow uploads it to a private Azure Storage container, which your website's deployment creates. It signs in to Azure with a federated credential: GitHub vouches for the run, so no password or key is stored here. Azure accepts it only from jobs in this repository's `experimental` environment, and it can write to that one container and nothing else.
+
+To set it up, once:
+
+1. Deploy your website. Its deployment run summary lists three values under **ReelForge Experimental uploader settings**.
+2. Here, in **Settings → Environments**, create an environment named `experimental`. Under **Deployment branches and tags**, allow only `main`. Add the three values as environment secrets named `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_STORAGE_ACCOUNT`.
+3. Run **Experimental Android app** from the Actions tab, or push to `main`.
+
+Until step 2 is done, the workflow builds and checks the app but doesn't upload it.
+
 ## Development
 
 ```sh
 npm install
 npm run dev      # dev server, reachable from your phone on the same Wi-Fi
+npm run dev:experimental # the same, with the Experimental features section (see Experimental features)
 npm test         # unit tests
 npm run build    # type-check and production build into dist/
 npm run downloads        # download numbers for the Android app (see Download stats)
@@ -122,6 +142,7 @@ The Android app wraps the same web app with [Capacitor](https://capacitorjs.com)
 
 ```sh
 npm run build:android    # build the web app for the app and copy it into android/
+npm run build:android:experimental   # the same for ReelForge Experimental (then build its APK with ./gradlew assembleExperimental)
 npx cap open android     # open in Android Studio to run it on a phone or emulator
 ```
 

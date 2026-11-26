@@ -22,6 +22,17 @@ describe('Android update identity', () => {
   });
 });
 
+describe('ReelForge Experimental', () => {
+  // It's signed with the same key, so with ReelForge's package id it would install over ReelForge as an update and
+  // open everyone's projects with experimental code. Its own id makes it a separate app with its own data.
+  it('is a separate app that can never install over ReelForge', () => {
+    expect(read('android/app/build.gradle')).toMatch(/experimental \{[^}]*applicationIdSuffix "\.experimental"/);
+    const workflow = read('.github/workflows/experimental.yml');
+    expect(workflow).toContain('./gradlew assembleExperimental');
+    expect(workflow).toContain(`EXPECTED_PACKAGE: ${APP_ID}.experimental`);
+  });
+});
+
 describe('Android data origin', () => {
   // The WebView keeps projects in IndexedDB keyed by the page origin, https://localhost.
   it('pins the origin the app is served from', () => {
