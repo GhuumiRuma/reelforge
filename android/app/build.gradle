@@ -35,6 +35,16 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+        // ReelForge Experimental: the web app built with its Experimental features section (src/experimental), by
+        // .github/workflows/experimental.yml. Its own package id makes it a separate app with its own data, so it
+        // can never install over ReelForge, and src/experimental/res here gives it its own name.
+        experimental {
+            initWith release
+            applicationIdSuffix ".experimental"
+            versionNameSuffix "-experimental"
+            // The Capacitor libraries only have debug and release.
+            matchingFallbacks = ['release']
+        }
     }
 }
 

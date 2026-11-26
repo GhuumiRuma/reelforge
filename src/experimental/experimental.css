@@ -1,0 +1,21 @@
+/* Styles for the Experimental features section, so they ship only in ReelForge Experimental. Colors come from the
+   theme tokens in src/styles.css, and any corner radius from 5px up is written calc(Npx * var(--rs)). */
+
+.exp-btn {
+  color: var(--accent);
+}
+
+.exp-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exp-features li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

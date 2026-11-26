@@ -1,5 +1,6 @@
 import { Clapperboard, Copy, DatabaseBackup, EllipsisVertical, Film, Pencil, Plus, RefreshCw, Scissors, ShieldCheck, Smartphone, Trash, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { experimental } from '@experimental';
 import type { Project } from '../types';
 import { answerReminder, reminderForThisLaunch } from '../lib/backupReminder';
 import { deleteProject, listProjects, requestPersistence, saveProject, storageInfo } from '../lib/db';
@@ -20,6 +21,9 @@ import { ThemeButton } from './ThemeButton';
 
 const INSTALL_HINT_KEY = 'rf-install-hint';
 const TAB_KEY = 'rf-home-tab';
+
+// Only ReelForge Experimental has one (see src/experimental).
+const { HomeButton: ExperimentalButton } = experimental;
 
 type Tab = 'projects' | 'clips';
 
@@ -100,6 +104,7 @@ export function Home() {
           ReelForge
         </h1>
         <div className="head-actions">
+          {ExperimentalButton && <ExperimentalButton />}
           <button className="icon-btn" aria-label="Back up and restore" onClick={() => setBackupOpen(true)}>
             <DatabaseBackup size={22} />
           </button>

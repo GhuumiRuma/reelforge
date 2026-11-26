@@ -1,0 +1,183 @@
+name: Experimental Android app
+
+# Builds ReelForge Experimental: the app with the Experimental features section (src/experimental), which installs
+# next to ReelForge with its own data. This repository is public, so the APK is never put in a release or a
+# workflow artifact here. It goes straight to a private Azure Storage container, and the admin section of the
+# owner's website is the only place to download it. See "Experimental features" in the README.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental
+  # Never stopped part way: a run stopped between the two uploads would leave a new APK with the old details.
+  cancel-in-progress: false
+
+env:
+  # The same permanent key as ReelForge (see android.yml), so each build installs over the one before it.
+  EXPECTED_CERT_SHA256: 7671c92462d13c9c7725ddbef4d21e3cb7e50d519c0c645d49fccf4f036c65cc
+  # Its own package id, so it can never install over ReelForge (the experimental build type in build.gradle).
+  EXPECTED_PACKAGE: io.github.monicariverawork.reelforge.experimental
+  CONTAINER: reelforge-experimental
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    # Azure accepts uploads only from this environment: the uploader's federated credential has the subject
+    # repo:<owner>/reelforge:environment:experimental. The environment's secrets say where the APK goes.
+    environment: experimental
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # A fork has no signing key, so it skips the build. Until the experimental environment has its Azure secrets,
+      # the APK is built and checked but not uploaded.
+      - name: Check the settings
+        id: settings
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_STORAGE_ACCOUNT: ${{ secrets.AZURE_STORAGE_ACCOUNT }}
+        run: |
+          build=false
+          upload=false
+          [ -n "$KEYSTORE_B64" ] && build=true
+          [ "$build" = true ] && [ -n "$AZURE_CLIENT_ID" ] && [ -n "$AZURE_TENANT_ID" ] && [ -n "$AZURE_STORAGE_ACCOUNT" ] && upload=true
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "upload=$upload" >> "$GITHUB_OUTPUT"
+          if [ "$build" != true ]; then
+            echo "::warning::ReelForge Experimental wasn't built: there's no signing key here (the ANDROID_KEYSTORE_* secrets)."
+          elif [ "$upload" != true ]; then
+            echo "::warning::ReelForge Experimental was built and checked but not uploaded: the experimental environment needs AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_STORAGE_ACCOUNT. See Experimental features in the README."
+          fi
+
+      - if: steps.settings.outputs.build == 'true'
+        uses: actions/checkout@v7
+      - if: steps.settings.outputs.build == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - if: steps.settings.outputs.build == 'true'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Signing key
+        if: steps.settings.outputs.build == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keystore="$RUNNER_TEMP/release.jks"
+          for value in "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            case "$value" in
+              '')
+                echo "::error::Set all four secrets: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD."
+                exit 1 ;;
+              *$'\n'*|*$'\r'*)
+                echo "::error::A signing secret contains a line break. Set it again without a trailing newline."
+                exit 1 ;;
+            esac
+          done
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$keystore"
+          keytool -list -keystore "$keystore" -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null \
+            || { echo "::error::The signing keystore does not open with the stored password and alias."; exit 1; }
+          {
+            echo "ANDROID_KEYSTORE_FILE=$keystore"
+            echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Build the web app with the Experimental features section
+        if: steps.settings.outputs.build == 'true'
+        run: |
+          npm ci
+          npm run build:android:experimental
+      - name: Build the APK
+        if: steps.settings.outputs.build == 'true'
+        working-directory: android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: 1.${{ github.run_number }}
+        run: |
+          ./gradlew assembleExperimental --no-daemon
+          cp app/build/outputs/apk/experimental/app-experimental.apk ../ReelForge-Experimental.apk
+
+      # Reads the package and certificate back out of the finished APK, so what's checked is what gets installed.
+      - name: Check the package and signature
+        id: apk
+        if: steps.settings.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ 2>/dev/null | sort -V | tail -n 1 || true)"
+          [ -x "${tools}aapt2" ] && [ -x "${tools}apksigner" ] || { echo "::error::aapt2 and apksigner were not found in the Android SDK."; exit 1; }
+          package="$("${tools}aapt2" dump badging ReelForge-Experimental.apk | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+          if [ "$package" != "$EXPECTED_PACKAGE" ]; then
+            echo "::error::The APK's package is '$package', not $EXPECTED_PACKAGE, so it could install over another app. It wasn't uploaded."
+            exit 1
+          fi
+          report="$("${tools}apksigner" verify --print-certs ReelForge-Experimental.apk)"
+          cert="$(printf '%s\n' "$report" | awk '/ certificate SHA-256 digest: / && !/Source Stamp/ { print tolower($NF); exit }')"
+          if [ "$cert" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::The APK is signed with certificate '$cert', not $EXPECTED_CERT_SHA256, so it couldn't update the copy already installed. Fix the signing secrets."
+            exit 1
+          fi
+          echo "cert=$cert" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to Azure
+        if: steps.settings.outputs.upload == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      # The APK goes up first and its details last, so the details never describe an APK that isn't there yet.
+      - name: Upload to private storage
+        if: steps.settings.outputs.upload == 'true'
+        env:
+          AZURE_STORAGE_ACCOUNT: ${{ secrets.AZURE_STORAGE_ACCOUNT }}
+          CERT_SHA256: ${{ steps.apk.outputs.cert }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          apk=ReelForge-Experimental.apk
+          details=ReelForge-Experimental.json
+          size="$(stat -c %s "$apk")"
+          sha256="$(sha256sum "$apk" | cut -d ' ' -f 1)"
+          jq -n \
+            --arg packageName "$EXPECTED_PACKAGE" \
+            --argjson versionCode "$BUILD_NUMBER" \
+            --arg versionName "1.$BUILD_NUMBER-experimental" \
+            --arg commit "$GITHUB_SHA" \
+            --arg builtAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson size "$size" \
+            --arg sha256 "$sha256" \
+            --arg certSha256 "$CERT_SHA256" \
+            --arg runUrl "$RUN_URL" \
+            '{packageName: $packageName, versionCode: $versionCode, versionName: $versionName, commit: $commit, builtAt: $builtAt, size: $size, sha256: $sha256, certSha256: $certSha256, runUrl: $runUrl}' \
+            > "$details"
+          upload() {
+            az storage blob upload --auth-mode login --account-name "$AZURE_STORAGE_ACCOUNT" --container-name "$CONTAINER" \
+              --name "$1" --file "$1" --content-type "$2" --overwrite --only-show-errors --output none
+          }
+          upload "$apk" application/vnd.android.package-archive
+          upload "$details" application/json
+          {
+            echo "### ReelForge Experimental"
+            echo "- Version \`1.$BUILD_NUMBER-experimental\`, $((size / 1024 / 1024)) MB"
+            echo "- SHA-256 \`$sha256\`"
+            echo "- Uploaded to private storage. Download it from your website's admin section."
+          } >> "$GITHUB_STEP_SUMMARY"
