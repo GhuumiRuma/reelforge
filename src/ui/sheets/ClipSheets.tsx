@@ -18,7 +18,6 @@ import {
   Keyboard,
   LoaderCircle,
   Moon,
-  Pipette,
   RotateCcw,
   RotateCw,
   Sparkles,
@@ -34,6 +33,7 @@ import type {
   AnimType,
   AudioItem,
   AudioProps,
+  BackgroundRemoval,
   BlendMode,
   ColorItem,
   ImageItem,
@@ -48,6 +48,7 @@ import type {
   VisualItem,
 } from '../../types';
 import { Compositor, type DrawLayer } from '../../engine/gl';
+import { readBackgroundRemoval, writeBackgroundRemoval } from '../../lib/background';
 import { DEFAULT_ADJUST } from '../../lib/defaults';
 import { ADJUST_DEFS, computeFx, FILTERS } from '../../lib/filters';
 import { haptic } from '../../lib/haptics';
@@ -57,6 +58,7 @@ import { clamp, formatDuration, nextFrame } from '../../lib/util';
 import { duration, getEngine, now, pause, seek } from '../../state/runtime';
 import { toast, useEditor, useTime } from '../../state/store';
 import { currentPose, writePose } from '../actions';
+import { BackgroundRemovalControls } from '../BackgroundRemovalControls';
 import { gesture, Segmented, Sheet, Slider, Swatches, Toggle, updateItem } from '../common';
 import { pickColor, stillTime, useSourceStill } from './CropSheet';
 
@@ -540,6 +542,7 @@ function useFilterPreviews(item: Media): Record<string, string> | null {
             fx: computeFx({ filter: f.id, filterAmount: 1, adjust: DEFAULT_ADJUST }),
             mask: null,
             chroma: null,
+            cutout: null,
           };
           comp.render({
             width: FILTER_PX,
@@ -878,26 +881,20 @@ export function OpacitySheet({ item, onClose }: { item: VisualItem; onClose: () 
 }
 
 // ---------------------------------------------------------------------------
-// Green screen (chroma key)
-
-const KEY_COLORS = ['#00ff00', '#00b140', '#0047bb', '#0000ff'];
+// Background removal (color key or automatic subject cutout)
 
 export function ChromaSheet({ item, onClose }: { item: Media; onClose: () => void }) {
   const id = item.id;
   const isMain = useIsMain(id);
-  const ch = item.chroma;
+  const removal = readBackgroundRemoval(item);
   const [picking, setPicking] = useState(false);
   const still = useSourceStill(item, picking);
 
-  const set = (patch: Partial<Visual['chroma']>, merge?: string) =>
+  const set = (patch: Partial<BackgroundRemoval>, merge?: string) =>
     updateItem<Media>(
       id,
       (it) => {
-        const c = it.chroma;
-        const next = { ...c, ...patch };
-        if (next.enabled !== c.enabled || next.color !== c.color || next.similarity !== c.similarity || next.smoothness !== c.smoothness) {
-          it.chroma = next;
-        }
+        writeBackgroundRemoval(it, patch);
       },
       merge,
     );
@@ -914,24 +911,22 @@ export function ChromaSheet({ item, onClose }: { item: Media; onClose: () => voi
       fy = (e.clientY - r.top) / r.height;
       if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return;
     }
-    set({ color: pickColor(img, fx, fy), enabled: true });
+    set({ mode: 'color', color: pickColor(img, fx, fy) });
     setPicking(false);
     haptic('light');
   };
 
   return (
-    <Sheet title="Green screen" onClose={onClose}>
-      <Toggle label="Remove background color" checked={ch.enabled} onChange={(enabled) => set({ enabled })} />
-      <Swatches
-        label="Color to remove"
-        colors={KEY_COLORS}
-        value={ch.color}
-        onChange={(color) => set({ color, enabled: true }, `chroma-color:${id}`)}
+    <Sheet title="Remove background" onClose={onClose}>
+      <BackgroundRemovalControls
+        value={removal}
+        onChange={(patch, merge) => {
+          if (patch.mode && patch.mode !== 'color') setPicking(false);
+          set(patch, merge ?? `background:${id}`);
+        }}
+        onPickColor={() => setPicking(!picking)}
+        picking={picking}
       />
-      <button className="secondary-btn block" aria-expanded={picking} onClick={() => setPicking(!picking)}>
-        <Pipette size={18} aria-hidden />
-        {picking ? 'Cancel' : 'Pick color from clip'}
-      </button>
       {picking &&
         (still === false ? (
           <p className="note">Couldn’t load a frame from this clip.</p>
@@ -944,30 +939,8 @@ export function ChromaSheet({ item, onClose }: { item: Media; onClose: () => voi
             <LoaderCircle className="spin" size={24} aria-label="Loading" />
           </div>
         ))}
-      <Slider
-        label="Strength"
-        value={ch.similarity}
-        min={0.05}
-        max={1}
-        step={0.01}
-        format={pct}
-        disabled={!ch.enabled}
-        onChange={(similarity) => set({ similarity })}
-        {...gesture}
-      />
-      <Slider
-        label="Edge softness"
-        value={ch.smoothness}
-        min={0}
-        max={0.4}
-        step={0.01}
-        format={off((v) => pct(v / 0.4))}
-        disabled={!ch.enabled}
-        onChange={(smoothness) => set({ smoothness })}
-        {...gesture}
-      />
-      {isMain && (
-        <p className="note">To show another video behind this one, add it as an overlay on top of your main video instead.</p>
+      {isMain && removal.mode !== 'off' && (
+        <p className="note">To show another video behind this one, add the cutout as an overlay on top of your main video instead.</p>
       )}
     </Sheet>
   );

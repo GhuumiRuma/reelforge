@@ -11,6 +11,7 @@ import type {
   VideoItem,
   Visual,
 } from '../types';
+import { DEFAULT_BACKGROUND_REMOVAL } from './background';
 import { uid } from './util';
 
 export const DEFAULT_ADJUST: Adjust = {
@@ -45,6 +46,7 @@ export function defaultVisual(fit: 'fit' | 'fill' = 'fit', scale = 1): Visual {
     keyframes: [],
     blend: 'normal',
     mask: { shape: 'none', radius: 0.18, feather: 0.01 },
+    backgroundRemoval: { ...DEFAULT_BACKGROUND_REMOVAL },
     chroma: { enabled: false, color: '#00ff00', similarity: 0.4, smoothness: 0.08 },
   };
 }

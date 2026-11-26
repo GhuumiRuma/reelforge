@@ -4,6 +4,7 @@
 import type {
   Aspect,
   AudioItem,
+  BackgroundRemoval,
   ClipMeta,
   ImageItem,
   Item,
@@ -17,6 +18,7 @@ import type {
   VisualItem,
 } from '../types';
 import { ClipError, encodeClip, posterFrame } from '../engine/clip';
+import { hasBackgroundRemoval, readBackgroundRemoval, writeBackgroundRemoval } from '../lib/background';
 import { clipSourceRange, timeStamp, uniqueName } from '../lib/clip';
 import { listClips, putClip, requestPersistence } from '../lib/db';
 import { aspectFor, audioItem, colorItem, imageItem, textItem, videoItem } from '../lib/defaults';
@@ -50,13 +52,13 @@ const ed = () => useEditor.getState();
 // ---------------------------------------------------------------------------
 // Files picked on Home for a brand-new project, imported once the editor opens.
 
-const pendingImports = new Map<string, File[]>();
+const pendingImports = new Map<string, { files: File[]; backgroundRemoval?: BackgroundRemoval }>();
 
-export function setPendingImport(projectId: string, files: File[]) {
-  pendingImports.set(projectId, files);
+export function setPendingImport(projectId: string, files: File[], backgroundRemoval?: BackgroundRemoval) {
+  pendingImports.set(projectId, { files, backgroundRemoval: backgroundRemoval ? { ...backgroundRemoval } : undefined });
 }
 
-export function takePendingImport(projectId: string): File[] | null {
+export function takePendingImport(projectId: string): { files: File[]; backgroundRemoval?: BackgroundRemoval } | null {
   const f = pendingImports.get(projectId) ?? null;
   pendingImports.delete(projectId);
   return f;
@@ -323,6 +325,8 @@ export interface InsertOptions {
   at?: 'end';
   /** match the project's format to the first clip (used when the timeline is empty) */
   autoAspect?: boolean;
+  /** effect saved with a reusable library clip */
+  backgroundRemoval?: BackgroundRemoval;
 }
 
 /** Imports picked files and puts visual media on the main track or as overlays; audio becomes music. */
@@ -356,7 +360,11 @@ export function insertMedia(assets: MediaAsset[], target: 'main' | 'overlay', op
   const t = now();
   if (target === 'main') {
     const idx = opts.at === 'end' ? p.main.length : mainInsertIndex(p.main, t);
-    const items = assets.map((a) => (a.kind === 'video' ? videoItem(a) : imageItem(a)));
+    const items = assets.map((a) => {
+      const it = a.kind === 'video' ? videoItem(a) : imageItem(a);
+      if (opts.backgroundRemoval) writeBackgroundRemoval(it, opts.backgroundRemoval);
+      return it;
+    });
     let aspect: Aspect | null = null;
     if (opts.autoAspect && !p.main.length) {
       const first = assets.find((a) => a.width > 0 && a.height > 0);
@@ -375,6 +383,7 @@ export function insertMedia(assets: MediaAsset[], target: 'main' | 'overlay', op
   const added: MainItem[] = [];
   for (const a of assets) {
     const it = a.kind === 'video' ? videoItem(a, start, true) : imageItem(a, start, 3, true);
+    if (opts.backgroundRemoval) writeBackgroundRemoval(it, opts.backgroundRemoval);
     added.push(it);
     start += it.duration;
   }
@@ -621,7 +630,7 @@ export async function insertLibraryClip(clip: ClipMeta, target: 'main' | 'overla
       return false;
     }
     if (asset.kind === 'audio') addAudio(asset, 'music', audioStart(), clip.name, true);
-    else insertMedia([asset], target, { autoAspect: target === 'main' });
+    else insertMedia([asset], target, { autoAspect: target === 'main', backgroundRemoval: clip.backgroundRemoval });
     return true;
   } catch (e) {
     console.error(e);
@@ -640,6 +649,7 @@ interface LibraryJob {
   name: string;
   /** what it was cut from, shown in the library */
   source: string;
+  backgroundRemoval?: BackgroundRemoval;
 }
 
 /** Cuts `start`–`end` out of `blob` and stores it in the clip library. */
@@ -668,6 +678,7 @@ async function saveToLibrary(blob: Blob, job: LibraryJob) {
         height: res.height,
         folderId: null,
         source: job.source,
+        backgroundRemoval: job.backgroundRemoval ? { ...job.backgroundRemoval } : undefined,
         start: job.start,
         end: job.end,
         createdAt: Date.now(),
@@ -683,7 +694,7 @@ async function saveToLibrary(blob: Blob, job: LibraryJob) {
 
 let savingClip = false;
 
-/** Saves the footage the selected video or audio clip plays (its edges, not its speed or effects) as a reusable clip. */
+/** Saves the selected source range, keeping background removal but not speed or other visual effects. */
 export async function saveSelectedAsClip() {
   const item = selectedItem(ed())?.item;
   if (savingClip || !item || (item.type !== 'video' && item.type !== 'audio')) return;
@@ -711,7 +722,15 @@ export async function saveSelectedAsClip() {
     }
     ed().setTask({ label: 'Saving clip…', progress: 0 });
     try {
-      await saveToLibrary(blob, { kind: item.type, start, end, name: safeFileName(answer, 'Clip'), source: prettyName(asset.name) });
+      const removal = item.type === 'video' ? readBackgroundRemoval(item) : undefined;
+      await saveToLibrary(blob, {
+        kind: item.type,
+        start,
+        end,
+        name: safeFileName(answer, 'Clip'),
+        source: prettyName(asset.name),
+        backgroundRemoval: hasBackgroundRemoval(removal) ? removal : undefined,
+      });
       toast(item.speed === 1 ? 'Saved to your clips' : 'Saved to your clips at normal speed', 'success');
       haptic('medium');
     } catch (err) {

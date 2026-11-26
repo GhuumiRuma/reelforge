@@ -1,10 +1,12 @@
 import { ALL_FORMATS, BlobSource, CanvasSink, Input } from 'mediabunny';
 import type { Project, VideoItem } from '../types';
+import { readBackgroundRemoval } from '../lib/background';
 import { canvasSize, projectDuration } from '../lib/layout';
 import { getAsset, getBlob, mediaEvents, peekImage, peekObjectUrl } from '../lib/media';
 import { fontEvents } from '../lib/text';
 import { clamp, isIOS } from '../lib/util';
 import { AudioPlayback } from './audio';
+import { peekRecentSubjectMatte, subjectMatte, subjectMatteBusy, subjectMatteKey } from './background';
 import { Compositor } from './gl';
 import { buildFrame, TextCache, type FrameProvider, type HitQuad } from './scene';
 
@@ -118,6 +120,7 @@ export interface PreviewOptions {
   onPlayState?: (playing: boolean) => void;
   /** Called after each rendered frame (e.g. to redraw selection handles). */
   onRender?: () => void;
+  onBackgroundError?: (message: string) => void;
 }
 
 /**
@@ -139,6 +142,7 @@ export class PreviewEngine {
   private peekT: number | null = null;
   private disposed = false;
   private provider: FrameProvider;
+  private failedMattes = new Set<string>();
   /** Hit-test quads of the last rendered frame (frame pixel space, topmost last). */
   quads: HitQuad[] = [];
   frameW = 2;
@@ -157,7 +161,7 @@ export class PreviewEngine {
     document.body.appendChild(this.box);
     this.provider = {
       video: (item, st) => this.videoFrame(item, st),
-      image: (id) => peekImage(id),
+      image: (item) => this.imageFrame(item),
     };
     mediaEvents.addEventListener('update', this.onExternal);
     fontEvents.addEventListener('loaded', this.onExternal);
@@ -187,6 +191,7 @@ export class PreviewEngine {
 
   /** Call whenever the project changes. */
   projectChanged() {
+    this.failedMattes.clear();
     if (this.isPlaying) this.audio.invalidate();
     this.requestRender();
   }
@@ -367,7 +372,37 @@ export class PreviewEngine {
       }
       if (!s) return null;
     }
-    return { source: s.canvas, version: s.version };
+    return this.withMatte(item, { source: s.canvas, version: s.version }, s.drawnAt);
+  }
+
+  private imageFrame(item: Parameters<FrameProvider['image']>[0]) {
+    const source = peekImage(item.mediaId);
+    return source ? this.withMatte(item, { source, version: 1 }, null) : null;
+  }
+
+  private withMatte<T extends { mediaId: string } & Project['main'][number]>(
+    item: T,
+    frame: { source: TexImageSource; version: number | string },
+    sourceTime: number | null,
+  ): ReturnType<FrameProvider['video']> {
+    if (readBackgroundRemoval(item).mode !== 'subject') return frame;
+    const key = subjectMatteKey(item.mediaId, sourceTime);
+    const ready = peekRecentSubjectMatte(item.mediaId, sourceTime);
+    if (ready) return { ...frame, matte: ready };
+    if (!subjectMatteBusy() && !this.failedMattes.has(key)) {
+      this.failedMattes.add(key);
+      void subjectMatte(key, frame.source)
+        .then(() => {
+          this.failedMattes.delete(key);
+          this.requestRender();
+        })
+        .catch((error) => {
+          if (!this.failedMattes.has(key)) return;
+          console.warn('Background cutout failed', error);
+          this.opts.onBackgroundError?.(error instanceof Error ? error.message : 'Could not remove this background.');
+        });
+    }
+    return frame;
   }
 
   private maxSide() {

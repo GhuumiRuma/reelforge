@@ -40,9 +40,9 @@ export function Editor({ id }: { id: string }) {
       useTime.setState({ time: 0, playing: false });
       useEditor.getState().open(p);
       setStatus('ready');
-      const files = takePendingImport(id);
-      if (files?.length) {
-        void importAndInsert(files, 'main', { autoAspect: true }).then(() => {
+      const pending = takePendingImport(id);
+      if (pending?.files.length) {
+        void importAndInsert(pending.files, 'main', { autoAspect: true, backgroundRemoval: pending.backgroundRemoval }).then(() => {
           // A new project starts with its first import; Undo shouldn't take it back to empty.
           const s = useEditor.getState();
           if (!alive || s.project?.id !== id) return;

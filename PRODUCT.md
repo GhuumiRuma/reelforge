@@ -12,7 +12,7 @@ A content creator who edits their own videos on their phone (iPhone and Android)
 
 ## Product Purpose
 
-ReelForge is a complete video editor for creators that installs from the browser onto the home screen. It covers the full job: import clips, photos and audio; trim, split, reorder and speed-ramp; layer text, stickers, overlays and picture-in-picture; add music, voiceover and sound effects; generate word-timed captions automatically; apply transitions, filters, color adjustment, crop, masks and green screen; then export an MP4 ready for TikTok, Reels, Shorts or YouTube. Success means a creator can finish and post a video without reaching for another app.
+ReelForge is a complete video editor for creators that installs from the browser onto the home screen. It covers the full job: import clips, photos and audio; trim, split, reorder and speed-ramp; layer text, stickers, overlays and picture-in-picture; add music, voiceover and sound effects; generate word-timed captions automatically; apply transitions, filters, color adjustment, crop, masks, green screen and automatic subject cutouts; then export an MP4 ready for TikTok, Reels, Shorts or YouTube. Success means a creator can finish and post a video without reaching for another app.
 
 ## Positioning
 
@@ -24,6 +24,7 @@ Everything happens on the phone: editing, speech-to-text captions and encoding a
 - Vertical 9:16 is the main output; 16:9 and 1:1 are also supported.
 - Finished videos go out through the phone's share sheet or are saved to the device.
 - Installed via Add to Home Screen (iOS Safari) or Install app (Android Chrome); works offline after the first visit. Captions download a speech model once (about 65 MB) on first use.
+- Automatic cutouts download a portrait-matting model once on first use. The model runs locally and only its weights are downloaded; the creator's media is never uploaded.
 
 ## Capabilities and Constraints
 

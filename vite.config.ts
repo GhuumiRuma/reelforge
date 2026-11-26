@@ -74,7 +74,7 @@ export default defineConfig(({ mode }) => ({
         name: 'ReelForge – Video Editor',
         short_name: 'ReelForge',
         description:
-          'Edit videos on your phone: trim, split, auto-captions, text, music, voiceover, transitions, filters, green screen and HD export.',
+          'Edit videos on your phone: trim, split, auto-captions, text, music, voiceover, transitions, filters, background removal and HD export.',
         lang: 'en',
         theme_color: '#0b0b0f',
         background_color: '#0b0b0f',
@@ -92,8 +92,8 @@ export default defineConfig(({ mode }) => ({
       workbox: {
         // Icons are added by includeAssets and the manifest, so they aren't globbed again here.
         globPatterns: ['**/*.{js,css,html}', 'assets/*-latin-[0-9]*-*.woff2'],
-        // The speech-recognition runtime is large and optional: cache it the first time captions are used.
-        globIgnores: ['**/captions.worker*', '**/*.wasm'],
+        // The on-device AI runtimes are large and optional: cache them when captions or cutouts are used.
+        globIgnores: ['**/captions.worker*', '**/background.worker*', '**/*.wasm'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         // The legal files are plain files next to index.html, not app screens, so they open as themselves.
@@ -108,6 +108,11 @@ export default defineConfig(({ mode }) => ({
             urlPattern: ({ url }) => url.pathname.includes('/assets/captions.worker'),
             handler: 'CacheFirst',
             options: { cacheName: 'rf-captions', expiration: { maxEntries: 8 } },
+          },
+          {
+            urlPattern: ({ url }) => url.pathname.includes('/assets/background.worker'),
+            handler: 'CacheFirst',
+            options: { cacheName: 'rf-background', expiration: { maxEntries: 8 } },
           },
         ],
       },

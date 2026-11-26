@@ -1,6 +1,7 @@
 import { Clapperboard, Download, EllipsisVertical, Film, FolderInput, FolderPlus, Music, Pencil, Play, Search, Share2, Trash, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ClipFolder, ClipMeta } from '../types';
+import { hasBackgroundRemoval } from '../lib/background';
 import { filterClips, uniqueName, type KindFilter } from '../lib/clip';
 import { deleteClip, deleteFolder, getClip, listClips, listFolders, putFolder, requestPersistence, saveProject, updateClipMeta } from '../lib/db';
 import { newProject } from '../lib/defaults';
@@ -145,7 +146,7 @@ export function ClipsLibrary() {
       return;
     }
     void requestPersistence();
-    setPendingImport(p.id, [file]);
+    setPendingImport(p.id, [file], c.backgroundRemoval);
     openProject(p.id);
   };
 
@@ -272,6 +273,7 @@ export function ClipsLibrary() {
                   {(folder === 'all' && c.folderId && folderName(c.folderId)) || c.source ? (
                     <small>{[folder === 'all' ? folderName(c.folderId) : null, c.source].filter(Boolean).join(' · ')}</small>
                   ) : null}
+                  {hasBackgroundRemoval(c.backgroundRemoval) && <small>{c.backgroundRemoval.mode === 'subject' ? 'Automatic cutout' : 'Color cutout'}</small>}
                 </span>
               </button>
               <button className="icon-btn" aria-label={`More options for ${c.name}`} onClick={() => void menu(c)}>
@@ -329,6 +331,7 @@ function ClipViewer({ clip, onClose }: { clip: ClipMeta; onClose: () => void }) 
       <p className="note">
         {[formatDuration(clip.duration), clip.kind === 'audio' ? 'Audio' : `${clip.width}×${clip.height}`, formatBytes(clip.size)].join(' · ')}
         {clip.source && <> · from {clip.source}</>}
+        {hasBackgroundRemoval(clip.backgroundRemoval) && <> · Background removal is applied in the editor</>}
       </p>
       <div className="btn-row">
         <button className="primary-btn" onClick={() => void shareClip(clip.id)}>

@@ -24,6 +24,7 @@ export interface DrawLayer {
   fx: FxParams | null;
   mask: { shape: MaskShape; radius: number; feather: number } | null;
   chroma: { color: [number, number, number]; similarity: number; smoothness: number } | null;
+  cutout: { matte: TexRef | null; feather: number } | null;
 }
 
 export interface Page {
@@ -96,6 +97,9 @@ uniform vec3 u_splitH;
 uniform int u_chroma;
 uniform vec3 u_key;
 uniform vec2 u_keyParams;
+uniform sampler2D u_matte;
+uniform int u_hasMatte;
+uniform float u_matteFeather;
 uniform int u_mask;
 uniform vec2 u_maskParams;
 uniform int u_aa;
@@ -135,6 +139,12 @@ void main() {
     a *= pow(clamp(base / max(u_keyParams.y, 0.0001), 0.0, 1.0), 1.5);
     float spill = pow(clamp(base / 0.1, 0.0, 1.0), 1.5);
     rgb = mix(vec3(dot(rgb, LUMA)), rgb, spill);
+  }
+
+  if (u_hasMatte == 1) {
+    float matte = texture(u_matte, v_uv).r;
+    float edge = max(u_matteFeather, 0.001);
+    a *= smoothstep(max(0.0, 0.5 - edge), min(1.0, 0.5 + edge), matte);
   }
 
   if (u_fx == 1) {
@@ -535,14 +545,17 @@ export class Compositor {
     gl.useProgram(P.prog);
     let tw = 1;
     let th = 1;
+    let baseTex: WebGLTexture | null = null;
     if (raw) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, raw.tex);
+      baseTex = raw.tex;
       tw = raw.w;
       th = raw.h;
     } else if (L.tex) {
       const e = this.upload(L.tex);
       if (!e) return;
+      baseTex = e.tex;
       tw = e.w;
       th = e.h;
     }
@@ -578,6 +591,14 @@ export class Compositor {
       gl.uniform3fv(P.u('u_key'), ch.color);
       gl.uniform2f(P.u('u_keyParams'), ch.similarity, ch.smoothness);
     }
+    const matte = L.cutout?.matte ? this.upload(L.cutout.matte) : null;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, matte?.tex ?? null);
+    gl.uniform1i(P.u('u_matte'), 1);
+    gl.uniform1i(P.u('u_hasMatte'), matte ? 1 : 0);
+    gl.uniform1f(P.u('u_matteFeather'), L.cutout?.feather ?? 0.12);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, baseTex);
     const m = L.mask;
     gl.uniform1i(P.u('u_mask'), !m || m.shape === 'none' ? 0 : m.shape === 'circle' ? 1 : 2);
     if (m) gl.uniform2f(P.u('u_maskParams'), m.radius, m.feather);
@@ -639,6 +660,7 @@ export class Compositor {
         fx: DIM_FX,
         mask: null,
         chroma: null,
+        cutout: null,
       },
       { tex: this.blurA.tex, w: bw, h: bh },
     );

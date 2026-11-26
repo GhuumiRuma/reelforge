@@ -3,6 +3,7 @@ import {
   ClipboardPaste,
   Crop as CropIcon,
   Download,
+  Eraser,
   FolderOpen,
   LoaderCircle,
   Music,
@@ -15,7 +16,8 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import type { ClipFolder } from '../types';
+import type { BackgroundRemoval, ClipFolder } from '../types';
+import { DEFAULT_BACKGROUND_REMOVAL, hasBackgroundRemoval } from '../lib/background';
 import { encodeClip, muxStreams, posterFrame } from '../engine/clip';
 import {
   aspectRatio,
@@ -44,6 +46,7 @@ import { clamp, formatBytes, formatClock, formatDuration, parseTime, safeFileNam
 import { canUseYouTubeApi, downloadYouTube, searchYouTube, youTubeDetails, type YtVideo } from '../lib/youtube';
 import { toast } from '../state/store';
 import { prettyName } from './actions';
+import { BackgroundRemovalControls } from './BackgroundRemovalControls';
 import { loadPrefs, Progress, savePrefs, Segmented } from './common';
 import { promptDialog } from './dialog';
 
@@ -92,6 +95,7 @@ export function Studio() {
   const [kind, setKind] = useState<'video' | 'audio'>('video');
   const [aspect, setAspect] = useState<CropAspect>('original');
   const [crop, setCrop] = useState<CropRect>(FULL_CROP);
+  const [backgroundRemoval, setBackgroundRemoval] = useState<BackgroundRemoval>({ ...DEFAULT_BACKGROUND_REMOVAL });
   const [name, setName] = useState('');
   const [folders, setFolders] = useState<ClipFolder[]>([]);
   const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs<Prefs>(PREFS_KEY, { quality: 720, folderId: null }));
@@ -135,6 +139,7 @@ export function Studio() {
     setTimes({ start: formatClock(s), end: formatClock(dur > 0 ? Math.min(dur, s + SUGGESTED_LENGTH) : s + SUGGESTED_LENGTH) });
     setAspect('original');
     setCrop(FULL_CROP);
+    setBackgroundRemoval({ ...DEFAULT_BACKGROUND_REMOVAL });
     setName('');
     setSaved(null);
     setError(null);
@@ -409,6 +414,7 @@ export function Studio() {
           source: source.title,
           youtubeId: source.youtubeId,
           sourceUrl: source.sourceUrl,
+          backgroundRemoval: hasBackgroundRemoval(backgroundRemoval) ? { ...backgroundRemoval } : undefined,
           start: check.start,
           end: check.end,
           createdAt: Date.now(),
@@ -600,6 +606,19 @@ export function Studio() {
                   {source.type === 'youtube'
                     ? 'You can drag the crop box once the video is downloaded.'
                     : 'Drag the box to move it; drag its corner to resize.'}
+                </p>
+              )}
+              <h3 className="section-title">
+                <Eraser size={14} aria-hidden /> Remove background
+              </h3>
+              <BackgroundRemovalControls
+                value={backgroundRemoval}
+                onChange={(patch) => setBackgroundRemoval((current) => ({ ...current, ...patch }))}
+                disabled={!!busy}
+              />
+              {backgroundRemoval.mode !== 'off' && (
+                <p className="note">
+                  This choice is saved with the clip and applied when you add it to a ReelForge project. The downloaded source file stays untouched.
                 </p>
               )}
             </>
