@@ -1,3 +1,8 @@
+/**
+ * Canvas-equivalent design tokens for the timeline. Values are derived from the
+ * same appearance store as DOM CSS, with cached computation because this palette is
+ * queried during every render frame.
+ */
 import type { AudioItem } from '../types';
 import type { Theme } from '../state/theme';
 import { STYLES, accentSet, cornerScale, isDefaultLook } from '../state/appearance';
@@ -82,8 +87,10 @@ export const TIMELINE_PALETTES: Record<Theme, TimelinePalette> = {
 };
 
 /** White lines on the handles, or near-black ones when the accent is too bright for white to show. */
+/** Chooses handle grip lines that retain at least 3:1 contrast against an accent. */
 const gripFor = (accent: string): string => (ratio(luminance(accent), 1) >= 3 ? '#ffffff' : '#0b0b0f');
 
+/** Builds a canvas palette by layering appearance-adjusted accent and surfaces. */
 function derive(theme: Theme, look: Look): TimelinePalette {
   const base = TIMELINE_PALETTES[theme];
   const accent = accentSet(look.style, look.accent, theme).accent;

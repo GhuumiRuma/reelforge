@@ -1,3 +1,8 @@
+/**
+ * Extract-a-sound quote workflow for a video item. Source-time fields are validated
+ * independently from timeline time, then the same range can either become an audio
+ * item or an encoded downloadable/shareable file.
+ */
 import { Download, LoaderCircle, Plus, Share } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { checkSoundbite, encodeSoundbite, NoSoundError, suggestSoundbite, tidyTime } from '../../engine/soundbite';
@@ -24,9 +29,10 @@ function lengthLabel(s: number): string {
   return `${(cs / 100).toFixed(cs % 10 ? 2 : 1)}s`;
 }
 
-/** "00m42.5s", like saved frames. */
+/** Builds a filename-safe source timestamp label such as `00m42.5s`. */
 const stamp = (t: number) => `${formatClock(t).replace(':', 'm')}s`;
 
+/** Converts expected memory/quota/no-sound failures into concise recovery text. */
 function saveError(e: unknown): string {
   if (e instanceof NoSoundError) return e.message;
   const msg = e instanceof Error ? e.message : String(e);
@@ -116,6 +122,7 @@ export function SoundbiteSheet({ item, onClose }: { item: VideoItem; onClose: ()
   const error = !check.ok && (attempted || (draft?.field !== check.field && (!typed || !committed.ok))) ? check : null;
   const busy = progress !== null;
 
+  /** Commits one temporary field draft, allowing an empty focus to leave the old value. */
   const leave = (field: Field) => {
     if (draft?.field !== field) return;
     if (draft.text.trim()) setTimes((t) => ({ ...t, [field]: tidyTime(draft.text, duration) }));
@@ -130,6 +137,7 @@ export function SoundbiteSheet({ item, onClose }: { item: VideoItem; onClose: ()
     return null;
   };
 
+  /** Adds the validated source range as an audio-track item and closes this sheet. */
   const add = () => {
     const c = valid();
     if (!c) return;
@@ -137,6 +145,7 @@ export function SoundbiteSheet({ item, onClose }: { item: VideoItem; onClose: ()
     onClose();
   };
 
+  /** Encodes the validated range to a local audio file with cancel/progress feedback. */
   const save = async () => {
     const c = valid();
     if (!c || busy) return;

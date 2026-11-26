@@ -1,3 +1,8 @@
+/**
+ * Video/still export sheet and finished-file handoff. Settings are persisted, export
+ * capability is probed for the selected dimensions, and each run is cancellable and
+ * generation-checked so stale asynchronous progress cannot overwrite a newer view.
+ */
 import { Download, Film, ImageDown, LoaderCircle, Share } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -19,9 +24,12 @@ import { now, pause } from '../../state/runtime';
 import { toast, useEditor } from '../../state/store';
 import { loadPrefs, Progress, savePrefs, Segmented, Sheet } from '../common';
 
+/** localStorage key shared by Editor's resolution chip and this settings sheet. */
 export const EXPORT_PREFS_KEY = 'rf-export';
+/** Safe settings used for a new install or malformed/missing preference fields. */
 export const EXPORT_DEFAULTS: ExportSettings = { resolution: 1080, fps: 30, quality: 'high' };
 
+/** Converts numeric output height to the labels used in chips and capability errors. */
 export function resolutionLabel(r: number): string {
   return r === 1440 ? '2K' : r === 2160 ? '4K' : `${r}p`;
 }
@@ -52,6 +60,7 @@ type View =
   | { kind: 'frame'; file: File; url: string; t: number }
   | { kind: 'error'; message: string };
 
+/** Turns the engine's nullable estimated seconds into a stable, rounded label. */
 function formatEta(s: number | null): string {
   if (s === null) return 'Working out the time left…';
   if (s < 10) return 'Almost done';
@@ -60,6 +69,7 @@ function formatEta(s: number | null): string {
   return `About ${m} minute${m === 1 ? '' : 's'} left`;
 }
 
+/** Rewrites background/memory failures into recoverable user guidance. */
 function friendlyError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   if (/reclaim|background|inactiv/i.test(msg)) return 'Saving stopped because ReelForge went into the background. Keep it open and try again.';
@@ -77,6 +87,11 @@ export function shareOrDownload(file: File) {
   );
 }
 
+/**
+ * Owns settings/running/done/frame/error states, revokes result URLs, and aborts
+ * exports on close. `autoStart` supports the editor's direct Save button while
+ * normal opening remains a capability/settings flow.
+ */
 export function ExportSheet({ onClose, autoStart }: { onClose: () => void; autoStart: boolean }) {
   const [settings, setSettings] = useState<ExportSettings>(() => loadPrefs(EXPORT_PREFS_KEY, EXPORT_DEFAULTS));
   const [view, setView] = useState<View>({ kind: 'settings' });
@@ -120,12 +135,17 @@ export function ExportSheet({ onClose, autoStart }: { onClose: () => void; autoS
     };
   }, [settings, aspect]);
 
+  /** Persists a merged export preference and triggers capability re-probing. */
   const change = (patch: Partial<ExportSettings>) => {
     const next = { ...settings, ...patch };
     setSettings(next);
     savePrefs(EXPORT_PREFS_KEY, next);
   };
 
+  /**
+   * Pauses preview and runs the full project export under a generation-scoped
+   * controller, publishing progress only for the current run.
+   */
   const start = async () => {
     const p = useEditor.getState().project;
     if (!p || projectDuration(p) <= 0 || ctl.current) return;
@@ -161,6 +181,7 @@ export function ExportSheet({ onClose, autoStart }: { onClose: () => void; autoS
     if (autoStart && total > 0) void startRef.current();
   }, []);
 
+  /** Invalidates progress callbacks before aborting and returns to settings. */
   const cancel = () => {
     runId.current++;
     ctl.current?.abort();
@@ -168,6 +189,7 @@ export function ExportSheet({ onClose, autoStart }: { onClose: () => void; autoS
     setView({ kind: 'settings' });
   };
 
+  /** Renders the paused current playhead as a shareable JPEG without changing settings. */
   const saveFrame = async () => {
     const p = useEditor.getState().project;
     if (!p || stillBusy || projectDuration(p) <= 0) return;

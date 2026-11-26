@@ -1,25 +1,39 @@
+/**
+ * Audio decode, resampling, timeline mixing, live playback, and PCM encoding.
+ * Offline callers pull bounded PCM windows from `AudioMixer`; preview playback
+ * schedules those windows on an `AudioContext` clock and owns all live nodes.
+ */
 import { ALL_FORMATS, AudioBufferSink, BlobSource, Input, canEncodeAudio, type WrappedAudioBuffer } from 'mediabunny';
 import type { AudioItem, Project, VideoItem } from '../types';
 import { itemEnd, projectDuration, transitionOverlap } from '../lib/layout';
 import { decodeWholeAudio, getAsset, getBlob, loadAssets } from '../lib/media';
 
-/** PCM covering a source-time range. `start` is the source time of sample 0. */
+/** PCM samples for a requested source range; `start` is the source time of sample zero. */
 interface Pcm {
   rate: number;
   start: number;
   channels: Float32Array[];
 }
 
+/** Decoding contract used by the mixer so streaming and whole-file strategies remain interchangeable. */
 interface Reader {
+  /** Returns PCM covering the requested source-time range, or null when no primary audio is available. */
   read(t0: number, t1: number): Promise<Pcm | null>;
+  /** Releases iterator/cache ownership local to this reader; shared process caches remain valid. */
   dispose(): void;
 }
 
 // ---------------------------------------------------------------------------
 // Whole-file decode fallback (used when WebCodecs cannot decode the audio track)
 
+/** Bounded LRU cache of full decoded buffers shared across whole-file readers. */
 const wholeCache = new Map<string, Promise<AudioBuffer>>();
 
+/**
+ * Returns a cached whole-file `AudioBuffer`, decoding once through the media
+ * fallback and moving the cache entry to MRU. Failed promises are evicted so a
+ * later request can retry; four decoded files are retained at most.
+ */
 function wholeBuffer(mediaId: string): Promise<AudioBuffer> {
   let p = wholeCache.get(mediaId);
   if (p) {
@@ -38,8 +52,19 @@ function wholeBuffer(mediaId: string): Promise<AudioBuffer> {
   return p;
 }
 
+/**
+ * Non-streaming reader for assets WebCodecs cannot decode. Every instance views
+ * the shared whole-file cache and exposes source samples from `t0` onward.
+ */
 class WholeReader implements Reader {
+  /** Stores only the media id because the decoded buffer is owned by `wholeCache`. */
   constructor(private mediaId: string) {}
+
+  /**
+   * Returns cached channels sliced at floor(`t0` * rate); `t1` is intentionally
+   * ignored because the full remainder is already resident and the mixer bounds
+   * how many samples it consumes.
+   */
   async read(t0: number): Promise<Pcm | null> {
     const buf = await wholeBuffer(this.mediaId);
     const rate = buf.sampleRate;
@@ -48,12 +73,18 @@ class WholeReader implements Reader {
     for (let c = 0; c < Math.min(2, buf.numberOfChannels); c++) channels.push(buf.getChannelData(c).subarray(i0));
     return { rate, start: i0 / rate, channels };
   }
+  /** No-op: the process-wide cache, not a single reader, owns the decoded data. */
   dispose() {}
 }
 
 // ---------------------------------------------------------------------------
 // Streaming WebCodecs reader: decodes sequentially, restarting only on seeks.
 
+/**
+ * Streaming WebCodecs reader that serializes read ranges and retains a small
+ * forward buffer. It restarts its audio iterator only for backward/large-forward
+ * seeks, avoiding a full-file allocation in the common path.
+ */
 class SinkReader implements Reader {
   private input: Input;
   private sink: Promise<AudioBufferSink | null>;
@@ -63,22 +94,37 @@ class SinkReader implements Reader {
   private done = false;
   private lock: Promise<unknown> = Promise.resolve();
 
+  /** Opens a Mediabunny input and lazily resolves its primary audio sink. */
   constructor(blob: Blob) {
     this.input = new Input({ formats: ALL_FORMATS, source: new BlobSource(blob) });
     this.sink = this.input.getPrimaryAudioTrack().then((t) => (t ? new AudioBufferSink(t) : null));
   }
 
+  /**
+   * Serializes calls through a promise lock because `AudioBufferSink` iterators
+   * cannot safely be advanced concurrently. A rejected read does not poison the
+   * next queued request.
+   */
   read(t0: number, t1: number): Promise<Pcm | null> {
     const run = this.lock.then(() => this.readImpl(t0, t1));
     this.lock = run.catch(() => undefined);
     return run;
   }
 
+  /** Timestamp immediately after the newest retained chunk, or the iterator's valid lower bound. */
   private lastEnd() {
     const l = this.chunks[this.chunks.length - 1];
     return l ? l.t + l.buf.duration : this.validFrom;
   }
 
+  /**
+   * Fills retained chunks through `t1`, starts a 20 ms pre-roll iterator when
+   * needed, and assembles the requested overlap into contiguous channel arrays.
+   *
+   * Old chunks are dropped once they are more than 0.5 s behind `t0`. Output
+   * uses the first buffer's sample rate, assumes a shared PCM clock, and maps
+   * missing source channels by taking the track's available channel count.
+   */
   private async readImpl(t0: number, t1: number): Promise<Pcm | null> {
     const sink = await this.sink;
     if (!sink) return null;
@@ -120,6 +166,7 @@ class SinkReader implements Reader {
     return { rate, start: t0, channels };
   }
 
+  /** Stops the iterator, drops retained PCM, and releases the demux input. */
   dispose() {
     void this.iter?.return();
     this.iter = null;
@@ -128,6 +175,11 @@ class SinkReader implements Reader {
   }
 }
 
+/**
+ * Selects a streaming reader when metadata permits WebCodecs, proving it by one
+ * small read. Decode startup failures dispose that reader and fall back to the
+ * whole-file strategy; missing assets then fail from the fallback loader.
+ */
 async function createReader(mediaId: string): Promise<Reader> {
   const asset = getAsset(mediaId) ?? (await loadAssets([mediaId]))[mediaId];
   if (asset?.canDecodeAudio) {
@@ -149,20 +201,32 @@ async function createReader(mediaId: string): Promise<Reader> {
 // ---------------------------------------------------------------------------
 // Mixer
 
+/** A timeline source plus its main-transition gain envelopes. */
 interface MixSource {
   item: VideoItem | AudioItem;
   ovIn: number;
   ovOut: number;
 }
 
+/** Mixer-wide selection used by caption and other reduced-role renders. */
 export interface MixOptions {
   excludeRoles?: AudioItem['role'][];
 }
 
+/**
+ * Pull-based timeline mixer with per-item readers and bounded reader retention.
+ *
+ * One instance is intended for one consumer/clock. Calls to `mix` are expected
+ * to remain monotonic in preview/export; backward jumps force decoder restarts.
+ */
 export class AudioMixer {
   private readers = new Map<string, { reader: Promise<Reader>; mediaId: string; used: number }>();
   private calls = 0;
 
+  /**
+   * Captures a live project accessor so edits are visible on the next mix call,
+   * plus the destination sample rate/channel count.
+   */
   constructor(
     private getProject: () => Project,
     readonly sampleRate: number,
@@ -170,6 +234,13 @@ export class AudioMixer {
     private opts: MixOptions = {},
   ) {}
 
+  /**
+   * Selects audible video/audio items intersecting `[t0, t1)` and derives
+   * incoming/outgoing overlap durations for main-track crossfades.
+   *
+   * Muted/near-zero-volume items, known no-audio assets, and excluded audio
+   * roles are omitted before expensive readers are opened.
+   */
   private sources(p: Project, t0: number, t1: number): MixSource[] {
     const out: MixSource[] = [];
     const hit = (it: { start: number; duration: number }) => it.start < t1 && itemEnd(it) > t0;
@@ -195,6 +266,11 @@ export class AudioMixer {
     return out;
   }
 
+  /**
+   * Gets a per-item reader, replacing it when the item's media id changes.
+   * Reader creation is asynchronous so both streaming probe and fallback failure
+   * can propagate to `mix` as a skip/logged warning.
+   */
   private reader(it: VideoItem | AudioItem): Promise<Reader> {
     let e = this.readers.get(it.id);
     if (e && e.mediaId !== it.mediaId) {
@@ -209,7 +285,19 @@ export class AudioMixer {
     return e.reader;
   }
 
-  /** Mixes `frames` samples starting at timeline time t0. Returns null when silent. */
+  /**
+   * Pulls `frames` samples starting at timeline time `t0`.
+   *
+   * Source intervals are converted through item speed/in points, resampled with
+   * linear interpolation (box averaging for significant downsampling), and
+   * multiplied by item volume, fades, and main-transition crossfades. Mono is
+   * distributed across output channels and multichannel source is down/up mapped
+   * deterministically. The final mix is hard-clipped to [-1, 1].
+   *
+   * Returns one `Float32Array` per output channel, or `null` when no active
+   * reader produced PCM. Read/decode failures for an individual item are logged
+   * and skipped so the rest of the timeline can continue.
+   */
   async mix(t0: number, frames: number): Promise<Float32Array[] | null> {
     const p = this.getProject();
     const sr = this.sampleRate;
@@ -283,6 +371,7 @@ export class AudioMixer {
     return out;
   }
 
+  /** Disposes per-item decoders that have not been touched for 40 mix calls. */
   private gc() {
     for (const [id, e] of this.readers) {
       if (this.calls - e.used > 40) {
@@ -292,13 +381,22 @@ export class AudioMixer {
     }
   }
 
+  /** Releases every reader owned by this mixer; pending reader creations dispose as soon as they resolve. */
   dispose() {
     for (const e of this.readers.values()) void e.reader.then((r) => r.dispose());
     this.readers.clear();
   }
 }
 
-/** Renders the project mix (or a part of it) into one Float32Array per channel. */
+/**
+ * Renders a project interval into one contiguous destination-rate channel
+ * array.
+ *
+ * `AudioMixer` is advanced in ten-second windows to bound transient decoder
+ * reads, while the returned arrays still require memory proportional to the
+ * full output interval. Progress is normalized by rendered frames, and abort is
+ * checked between windows. All readers are disposed on success or failure.
+ */
 export async function renderMix(
   p: Project,
   sampleRate: number,
@@ -328,8 +426,16 @@ export async function renderMix(
 // ---------------------------------------------------------------------------
 // Live playback. The AudioContext clock drives the preview so picture follows sound.
 
+/** Browser navigator extension used by iOS audio-session coordination. */
 type AudioSessionNav = Navigator & { audioSession?: { type: string } };
 
+/**
+ * Live audio scheduler used as the editor preview's master clock.
+ *
+ * It renders project windows just ahead of playback, schedules them onto an
+ * `AudioContext`, and owns timeline nodes, one-shot previews, generation
+ * invalidation, and long-lived context cleanup.
+ */
 export class AudioPlayback {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -352,14 +458,25 @@ export class AudioPlayback {
   private previewNode: AudioBufferSourceNode | null = null;
   private previewGen = 0;
 
+  /** Captures the project accessor shared with the live `AudioMixer`. */
   constructor(private getProject: () => Project) {}
 
-  /** Silences timeline audio without stopping the clock (e.g. while recording a voiceover). */
+  /**
+   * Silences all scheduled/preview audio without moving or stopping the clock.
+   * Updating the master gain also affects nodes already scheduled (for example
+   * while recording a voiceover).
+   */
   setMuted(muted: boolean) {
     this.silenced = muted;
     if (this.master) this.master.gain.value = muted ? 0 : 1;
   }
 
+  /**
+   * Returns a non-closed context or creates one, including a master gain and
+   * destination-rate mixer. This is also where iOS audio-session type is
+   * requested. Calling it must originate from a user gesture on platforms that
+   * require audio unlock.
+   */
   private ensureCtx(): AudioContext {
     if (this.ctx && this.ctx.state !== 'closed') return this.ctx;
     const nav = navigator as AudioSessionNav;
@@ -380,10 +497,12 @@ export class AudioPlayback {
     return ctx;
   }
 
+  /** Whether timeline playback has an active logical clock. */
   get isRunning() {
     return this.running;
   }
 
+  /** Estimates output + base audio latency, capped so `now()` cannot jump more than 0.5 s. */
   private latency(): number {
     const c = this.ctx as (AudioContext & { outputLatency?: number }) | null;
     if (!c) return 0;
@@ -391,6 +510,10 @@ export class AudioPlayback {
     return Number.isFinite(l) ? Math.min(0.5, l) : 0;
   }
 
+  /**
+   * Smooths browsers that hold `AudioContext.currentTime` constant between
+   * render quanta by extrapolating from `performance.now()` for at most 50 ms.
+   */
   private ctxNow(): number {
     const ct = this.ctx!.currentTime;
     const pn = performance.now();
@@ -402,7 +525,11 @@ export class AudioPlayback {
     return ct + Math.min(0.05, (pn - this.lastPn) / 1000);
   }
 
-  /** Current playback position on the timeline. */
+  /**
+   * Returns the current project time from the audio-clock anchor, or the
+   * performance clock while an interrupted/suspended context starts. Tiny
+   * backwards jitter is suppressed; while stopped this returns the saved base.
+   */
   now(): number {
     if (!this.running) return this.base;
     let t: number;
@@ -413,7 +540,12 @@ export class AudioPlayback {
     return t;
   }
 
-  /** Must be called from a user gesture handler so the AudioContext may start. */
+  /**
+   * Starts timeline playback at `t` and must be invoked directly by a user
+   * gesture. It stops prior nodes, creates a 120 ms audio lead-in, starts a
+   * silent unlock source, and switches from a performance fallback to the
+   * context clock once `AudioContext` reaches `running`.
+   */
   start(t: number) {
     this.stop();
     const ctx = this.ensureCtx();
@@ -452,6 +584,11 @@ export class AudioPlayback {
     void this.pump(gen);
   }
 
+  /**
+   * Saves the current time, invalidates pending pump work, clears the pump timer,
+   * and stops all scheduled timeline nodes. The audio context stays open for a
+   * fast later restart.
+   */
   stop() {
     this.stopPreview();
     if (this.running) this.base = this.now();
@@ -471,7 +608,12 @@ export class AudioPlayback {
     this.nodes.clear();
   }
 
-  /** The project changed while playing: re-mix upcoming audio without moving the clock. */
+  /**
+   * Debounces project edits while playing, then re-mixes from 100 ms in the
+   * future without changing the user-visible clock. Previously scheduled nodes
+   * are stopped at the replacement boundary and a generation token discards
+   * stale asynchronous mixing.
+   */
   invalidate() {
     if (!this.running || this.invalidateTimer) return;
     this.invalidateTimer = setTimeout(() => {
@@ -492,6 +634,13 @@ export class AudioPlayback {
     }, 120);
   }
 
+  /**
+   * Keeps approximately 1.2 s of timeline audio ahead of `now()`.
+   *
+   * Only one pump runs at a time. It mixes 0.5 s windows, schedules each buffer
+   * at the audio anchor, skips silence, and handles buffers whose start time has
+   * just passed. Generation checks prevent edits/stops from queuing stale nodes.
+   */
   private async pump(gen: number) {
     if (this.pumping || gen !== this.gen || !this.running || !this.mixer || !this.ctx) return;
     this.pumping = true;
@@ -531,7 +680,14 @@ export class AudioPlayback {
     }
   }
 
-  /** Plays a clip immediately (SFX and saved clips), replacing any preview still playing or loading. Call from the tap so iOS unlocks audio. */
+  /**
+   * Replaces the current one-shot preview with a blob or pending blob promise.
+   *
+   * It starts in the caller's tap to satisfy iOS unlock rules, resumes the
+   * context, decodes in place, and uses a generation token so a replaced loading
+   * preview exits silently. It resolves when scheduled, not when playback ends,
+   * and rethrows decode errors only if still current.
+   */
   async preview(blob: Blob | Promise<Blob>) {
     this.stopPreview();
     const gen = this.previewGen;
@@ -557,7 +713,10 @@ export class AudioPlayback {
     }
   }
 
-  /** Silences the preview and cancels one that is still loading. Timeline playback stops it too. */
+  /**
+   * Invalidates a loading one-shot preview and stops its currently scheduled
+   * node. Timeline audio is unaffected because preview ownership is separate.
+   */
   stopPreview() {
     this.previewGen++;
     const n = this.previewNode;
@@ -569,6 +728,7 @@ export class AudioPlayback {
     }
   }
 
+  /** Stops playback, releases the mixer/context, and closes the current audio resources; callers should not reuse it. */
   dispose() {
     this.stop();
     this.mixer?.dispose();
@@ -580,9 +740,14 @@ export class AudioPlayback {
 // ---------------------------------------------------------------------------
 // Encoding
 
+/** One-time AAC WebAssembly registration promise shared by all encoders. */
 let aacPolyfill: Promise<void> | null = null;
 
-/** Whether AAC can be encoded with these settings, loading the WebAssembly encoder where the browser has none. */
+/**
+ * Probes native AAC support for the exact channel/rate/bitrate request. If absent,
+ * it registers Mediabunny's WASM encoder once and retries the probe. Loading
+ * failures are logged and converted into `false` so callers can choose WAV/Opus.
+ */
 export async function canEncodeAac(opts: { numberOfChannels: number; sampleRate: number; bitrate: number }): Promise<boolean> {
   if (await canEncodeAudio('aac', opts).catch(() => false)) return true;
   aacPolyfill ??= import('@mediabunny/aac-encoder')
@@ -592,12 +757,22 @@ export async function canEncodeAac(opts: { numberOfChannels: number; sampleRate:
   return canEncodeAudio('aac', opts).catch(() => false);
 }
 
+/**
+ * Encodes planar floating-point PCM as an interleaved 16-bit little-endian WAV
+ * blob.
+ *
+ * The first channel establishes frame length; callers are responsible for
+ * equal channel lengths. Samples are hard-clamped to [-1, 1], negative values
+ * map to signed PCM's -32768 scale, and no input buffers are mutated.
+ */
 export function encodeWav(channels: Float32Array[], sampleRate: number): Blob {
   const nch = channels.length;
   const len = channels[0]?.length ?? 0;
   const bytes = len * nch * 2;
   const buf = new ArrayBuffer(44 + bytes);
   const v = new DataView(buf);
+  // Writes fixed-width ASCII fields into the RIFF header without allocating
+  // temporary TextEncoder/string buffers.
   const str = (o: number, s: string) => {
     for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i));
   };

@@ -47,6 +47,7 @@ import { duration, now, pause, seek } from '../state/runtime';
 import { selectedItem, toast, useEditor, type ApplyOptions } from '../state/store';
 import { promptDialog } from './dialog';
 
+/** Reads the latest editor store outside React without capturing a render's snapshot. */
 const ed = () => useEditor.getState();
 
 // ---------------------------------------------------------------------------
@@ -54,10 +55,15 @@ const ed = () => useEditor.getState();
 
 const pendingImports = new Map<string, { files: File[]; backgroundRemoval?: BackgroundRemoval }>();
 
+/**
+ * Hands files selected before route transition to the editor that will own the
+ * newly created project. A copy of removal settings avoids later mutation.
+ */
 export function setPendingImport(projectId: string, files: File[], backgroundRemoval?: BackgroundRemoval) {
   pendingImports.set(projectId, { files, backgroundRemoval: backgroundRemoval ? { ...backgroundRemoval } : undefined });
 }
 
+/** Atomically consumes a pending project import so a remount cannot insert it twice. */
 export function takePendingImport(projectId: string): { files: File[]; backgroundRemoval?: BackgroundRemoval } | null {
   const f = pendingImports.get(projectId) ?? null;
   pendingImports.delete(projectId);
@@ -79,6 +85,7 @@ export function lastTextStyle(): Partial<TextStyle> | undefined {
   }
 }
 
+/** Best-effort persistence of a user's most recent text-style choices for new text. */
 export function rememberTextStyle(style: Partial<TextStyle>) {
   try {
     localStorage.setItem(TEXT_STYLE_KEY, JSON.stringify(style));
@@ -107,6 +114,7 @@ export function createText(text: string, style?: Partial<TextStyle>, merge?: str
   return it.id;
 }
 
+/** Creates a short, transparent text item for an emoji at the current playhead. */
 export function addSticker(emoji: string) {
   pause();
   const it: TextItem = textItem(emoji, now(), 3, { size: 0.16, shadowBlur: 0, strokeWidth: 0, bgOpacity: 0, highlightOn: false });
@@ -196,12 +204,17 @@ const VISUAL_KEYS: (keyof Visual)[] = [
   'chroma',
 ];
 
+/** Deep-copies every visual property while deliberately excluding timing and audio state. */
 function copyVisual(from: Visual, to: Visual) {
   for (const k of VISUAL_KEYS) (to as unknown as Record<string, unknown>)[k] = structuredClone(from[k]);
 }
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Splits the selected item, or the main clip under the playhead when nothing is
+ * selected, after pausing and validating that the point is safely inside it.
+ */
 export function splitAtPlayhead() {
   const s = ed();
   const p = s.project;
@@ -230,6 +243,7 @@ export function splitAtPlayhead() {
   else toast('Too close to the edge of the clip to split');
 }
 
+/** Removes the current selection in one undoable edit and clears the selection. */
 export function deleteSelected() {
   const s = ed();
   const sel = selectedItem(s);
@@ -239,6 +253,7 @@ export function deleteSelected() {
   haptic('light');
 }
 
+/** Duplicates the current selection and seeks to a duplicated main clip's start. */
 export function duplicateSelected() {
   const s = ed();
   const sel = selectedItem(s);
@@ -252,6 +267,7 @@ export function duplicateSelected() {
   }
 }
 
+/** Rotates the selected visual item and all its keyframes by one quarter turn. */
 export function rotateSelected() {
   const sel = selectedItem(ed());
   if (!sel || sel.item.type === 'audio') return;
@@ -265,6 +281,7 @@ export function rotateSelected() {
   });
 }
 
+/** Toggles a selected visual item's horizontal or vertical mirror flag. */
 export function flipSelected(axis: 'h' | 'v' = 'h') {
   const sel = selectedItem(ed());
   if (!sel || sel.item.type === 'audio') return;
@@ -277,6 +294,7 @@ export function flipSelected(axis: 'h' | 'v' = 'h') {
   });
 }
 
+/** Switches photo/video media between contain and cover framing with feedback. */
 export function toggleFit() {
   const sel = selectedItem(ed());
   if (!sel || (sel.item.type !== 'video' && sel.item.type !== 'image')) return;
@@ -353,6 +371,10 @@ export async function importAndInsert(files: File[], target: 'main' | 'overlay',
   }
 }
 
+/**
+ * Builds media items and inserts them either into normalized main-track sequence
+ * space or consecutive non-overlapping overlay lanes, then moves/sets selection.
+ */
 export function insertMedia(assets: MediaAsset[], target: 'main' | 'overlay', opts: InsertOptions = {}) {
   const p = ed().project;
   if (!p || !assets.length) return;
@@ -397,6 +419,7 @@ export function insertMedia(assets: MediaAsset[], target: 'main' | 'overlay', op
   if (last) ed().select(last);
 }
 
+/** Adds a three-second solid clip to the main sequence or a free overlay lane. */
 export function addColorClip(color: string, target: 'main' | 'overlay') {
   const p = ed().project;
   if (!p) return;
@@ -421,6 +444,7 @@ export function addColorClip(color: string, target: 'main' | 'overlay') {
 }
 
 /** Where the picture ends (main clips, overlays and text). */
+/** Last visible time of main media, overlays, or text, excluding audio-only tails. */
 function visualEnd(p: Project): number {
   let e = mainEnd(p);
   for (const it of [...p.overlays, ...p.texts]) e = Math.max(e, itemEnd(it));
@@ -433,6 +457,11 @@ export function audioStart(): number {
   return t >= duration() - 0.1 ? 0 : t;
 }
 
+/**
+ * Creates an audio item on the first non-overlapping lane. Music added from the
+ * project end is trimmed to the picture, while explicit offsets and selection are
+ * retained for library, voiceover, and sound-effect callers.
+ */
 export function addAudio(asset: MediaAsset, role: AudioItem['role'], start = now(), name?: string, select = false) {
   const it = audioItem(asset, start, role, name ?? prettyName(asset.name));
   const p = ed().project;
@@ -454,10 +483,12 @@ export function addAudio(asset: MediaAsset, role: AudioItem['role'], start = now
   return it.id;
 }
 
+/** Produces a compact display/source name by removing common extensions and underscores. */
 export function prettyName(file: string): string {
   return file.replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[_]+/g, ' ').trim() || 'Audio';
 }
 
+/** Moves a selected video's audible range to an audio track and mutes its source. */
 export function extractAudio() {
   const sel = selectedItem(ed());
   if (!sel || sel.item.type !== 'video') return;
@@ -620,6 +651,7 @@ export async function insertLibraryClip(clip: ClipMeta, target: 'main' | 'overla
   // The clip lands at the playhead, so stop playback before the first await: it must not move while the clip loads.
   pause();
   // The user can leave while the clip loads (the task is only a status pill): never add it to another project.
+  /** Guards every post-await insert/task change against project-route replacement. */
   const stillOpen = () => ed().project?.id === projectId;
   ed().setTask({ label: 'Adding clip…', progress: null });
   try {

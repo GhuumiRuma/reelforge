@@ -9,6 +9,13 @@ import { Editor } from './ui/Editor';
 import { Home } from './ui/Home';
 import { Studio } from './ui/Studio';
 
+/**
+ * Selects the active top-level screen and mounts feedback UI shared by every route.
+ *
+ * Routing is hash/history based rather than a client-side router. Escape mirrors
+ * the native back action only while a sheet or dialog has registered a back-stack
+ * entry, so ordinary key presses never navigate away from the app.
+ */
 export function App() {
   const route = useRoute();
   useEffect(() => {
@@ -32,6 +39,12 @@ export function App() {
   );
 }
 
+/**
+ * Renders the editor store's bounded toast queue as a polite live region.
+ *
+ * Each toast is a button so it can be dismissed with either pointer or keyboard;
+ * store-owned timers also remove it after its severity-specific lifetime.
+ */
 function Toasts() {
   const toasts = useEditor((s) => s.toasts);
   const dismiss = useEditor((s) => s.dismissToast);
@@ -48,6 +61,12 @@ function Toasts() {
   );
 }
 
+/**
+ * Shows long-running work, such as local transcription or export, above the UI.
+ *
+ * A `null` progress value represents an indeterminate task, while numeric values
+ * are normalized by the shared progress component.
+ */
 function TaskPill() {
   const task = useEditor((s) => s.task);
   if (!task) return null;

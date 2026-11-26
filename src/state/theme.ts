@@ -26,10 +26,12 @@ export const THEME_COLORS: Record<Theme, string> = { dark: '#0b0b0f', light: '#f
 /** The id of the <style> element that holds the look. index.html creates it before the first paint. */
 export const LOOK_STYLE_ID = 'rf-look';
 
+/** Validates a stored mode value and maps every unknown input to System. */
 export function parsePref(raw: string | null | undefined): ThemePref {
   return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : DEFAULT_PREF;
 }
 
+/** Resolves System against device preference while preserving explicit Light/Dark. */
 export function resolveTheme(pref: ThemePref, systemIsLight: boolean): Theme {
   return pref === 'system' ? (systemIsLight ? 'light' : 'dark') : pref;
 }
@@ -41,11 +43,13 @@ interface ThemeState {
   look: Look;
 }
 
+/** Gets the light-system media query only in a capable browser environment. */
 const systemQuery = (): MediaQueryList | null =>
   typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     ? window.matchMedia('(prefers-color-scheme: light)')
     : null;
 
+/** Reads the persisted mode defensively; unavailable or corrupt storage means System. */
 function readPref(): ThemePref {
   try {
     return parsePref(localStorage.getItem(THEME_KEY));
@@ -54,6 +58,7 @@ function readPref(): ThemePref {
   }
 }
 
+/** Reads and validates the persisted look without preventing theme startup. */
 function readLook(): Look {
   try {
     return parseLook(localStorage.getItem(LOOK_KEY));
@@ -62,13 +67,16 @@ function readLook(): Look {
   }
 }
 
+/** Resolves the initial mode/look once so selectors see a coherent first render. */
 function initialState(): ThemeState {
   const pref = readPref();
   return { pref, theme: resolveTheme(pref, !!systemQuery()?.matches), look: readLook() };
 }
 
+/** Zustand appearance store: preference, resolved theme, and the current look. */
 export const useTheme = create<ThemeState>()(initialState);
 
+/** Updates one browser metadata token if the document exposes it. */
 function setMeta(name: string, content: string) {
   document.querySelector(`meta[name="${name}"]`)?.setAttribute('content', content);
 }
@@ -89,6 +97,7 @@ function applyLook(look: Look) {
   if (el.textContent !== css) el.textContent = css;
 }
 
+/** Applies resolved appearance to DOM tokens, metadata, and native system bars. */
 function apply(theme: Theme, look: Look) {
   document.documentElement.dataset.theme = theme;
   applyLook(look);
@@ -99,6 +108,7 @@ function apply(theme: Theme, look: Look) {
   if (isNativeApp()) void import('../lib/native').then((n) => n.nativeSystemBars(theme)).catch(() => undefined);
 }
 
+/** Resolves and atomically publishes an appearance before applying it to the document. */
 function commit(pref: ThemePref, look: Look) {
   const theme = resolveTheme(pref, !!systemQuery()?.matches);
   useTheme.setState({ pref, theme, look });
@@ -115,6 +125,7 @@ export function setThemePref(pref: ThemePref) {
   commit(pref, useTheme.getState().look);
 }
 
+/** Avoids replacing a semantically unchanged look object (and needless subscribers). */
 const sameLook = (a: Look, b: Look) => a.style === b.style && a.accent === b.accent && a.corners === b.corners;
 
 /** Saves and applies a change to the look. Fields that aren't valid are ignored. */

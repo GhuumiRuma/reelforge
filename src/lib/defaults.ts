@@ -1,3 +1,9 @@
+/**
+ * Factories and constants for new timeline projects and items.
+ *
+ * Every factory returns independent mutable style/visual objects with stable IDs, so callers can
+ * add the result directly to a project without sharing nested defaults with future items.
+ */
 import type {
   Adjust,
   Aspect,
@@ -14,6 +20,7 @@ import type {
 import { DEFAULT_BACKGROUND_REMOVAL } from './background';
 import { uid } from './util';
 
+/** Neutral adjustment values applied before preset filters or user adjustments are added. */
 export const DEFAULT_ADJUST: Adjust = {
   brightness: 0,
   contrast: 0,
@@ -29,6 +36,12 @@ export const DEFAULT_ADJUST: Adjust = {
   sharpen: 0,
 };
 
+/**
+ * Builds a complete visual configuration for a new item.
+ *
+ * `fit`/`fill` controls its initial containment mode; `scale` is the base transform for overlays.
+ * Nested objects are fresh copies so later item edits cannot mutate global defaults.
+ */
 export function defaultVisual(fit: 'fit' | 'fill' = 'fit', scale = 1): Visual {
   return {
     transform: { x: 0, y: 0, scale, rotation: 0 },
@@ -51,6 +64,7 @@ export function defaultVisual(fit: 'fit' | 'fill' = 'fit', scale = 1): Visual {
   };
 }
 
+/** Baseline typography values from which text items and presets derive. */
 export const DEFAULT_TEXT_STYLE: TextStyle = {
   font: 'Montserrat',
   weight: 800,
@@ -73,6 +87,12 @@ export const DEFAULT_TEXT_STYLE: TextStyle = {
   highlightOn: false,
 };
 
+/**
+ * Creates an empty, vertically oriented project at the current clock time.
+ *
+ * The ID is generated locally, and initial track arrays are independent. No persistence occurs;
+ * the caller decides when to save the returned document.
+ */
 export function newProject(name: string, aspect: Aspect = '9:16'): Project {
   const now = Date.now();
   return {
@@ -91,6 +111,10 @@ export function newProject(name: string, aspect: Aspect = '9:16'): Project {
   };
 }
 
+/**
+ * Creates a main or overlay video item from probed media.
+ * Duration is at least 100 ms, and source trim/playback settings start at their natural values.
+ */
 export function videoItem(asset: MediaAsset, start = 0, overlay = false): VideoItem {
   return {
     id: uid('v_'),
@@ -109,6 +133,9 @@ export function videoItem(asset: MediaAsset, start = 0, overlay = false): VideoI
   };
 }
 
+/**
+ * Creates an image item with the requested timeline range and optional reduced overlay scale.
+ */
 export function imageItem(asset: MediaAsset, start = 0, duration = 3, overlay = false): ImageItem {
   return {
     id: uid('i_'),
@@ -121,6 +148,7 @@ export function imageItem(asset: MediaAsset, start = 0, duration = 3, overlay = 
   };
 }
 
+/** Creates a full-color visual item, using fill mode by default and a smaller overlay scale. */
 export function colorItem(color: string, start = 0, duration = 3, overlay = false): ColorItem {
   return {
     id: uid('c_'),
@@ -133,6 +161,9 @@ export function colorItem(color: string, start = 0, duration = 3, overlay = fals
   };
 }
 
+/**
+ * Creates a timeline text item and merges preset style overrides over the application defaults.
+ */
 export function textItem(text: string, start: number, duration: number, style?: Partial<TextStyle>): TextItem {
   return {
     id: uid('t_'),
@@ -146,6 +177,12 @@ export function textItem(text: string, start: number, duration: number, style?: 
   };
 }
 
+/**
+ * Creates an audio track item from media metadata.
+ *
+ * `role` distinguishes music, voice, and other editor audio, while an optional display `name`
+ * overrides the source filename without changing persistence of the media itself.
+ */
 export function audioItem(asset: MediaAsset, start: number, role: AudioItem['role'], name?: string): AudioItem {
   return {
     id: uid('a_'),
@@ -165,7 +202,11 @@ export function audioItem(asset: MediaAsset, start: number, role: AudioItem['rol
   };
 }
 
-/** Picks the preset aspect closest to the given media dimensions. */
+/**
+ * Picks the preset aspect closest to the media dimensions in logarithmic ratio distance.
+ *
+ * Invalid zero dimensions fall back to 9:16, and the calculation is independent of orientation.
+ */
 export function aspectFor(width: number, height: number): Aspect {
   if (!width || !height) return '9:16';
   const r = width / height;

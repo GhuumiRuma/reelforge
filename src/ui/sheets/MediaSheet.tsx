@@ -1,3 +1,8 @@
+/**
+ * Media insertion sheet for the main sequence or overlay track. It merges local
+ * project assets, reusable library clips, and color clips into one closing action
+ * while load-only thumbnail work is canceled safely when the sheet unmounts.
+ */
 import { Film, ImageIcon, ImagePlus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { ClipMeta, MediaAsset } from '../../types';
@@ -10,6 +15,7 @@ import { useEditor } from '../../state/store';
 import { addColorClip, importAndInsert, insertLibraryClip, insertMedia } from '../actions';
 import { colorName, PALETTE, Sheet } from '../common';
 
+/** Loads already-used project media and exposes fresh/library/color insertion choices. */
 export function MediaSheet({ target, onClose }: { target: 'main' | 'overlay'; onClose: () => void }) {
   const ids = useEditor((s) => (s.project ? projectMediaIds(s.project).join(',') : ''));
   const [assets, setAssets] = useState<MediaAsset[]>([]);
@@ -25,6 +31,7 @@ export function MediaSheet({ target, onClose }: { target: 'main' | 'overlay'; on
     };
   }, [ids]);
 
+  /** Opens the picker in the tap, closes the sheet, and imports into the requested track. */
   const choose = () => {
     // Opens the picker synchronously inside the tap (required on iOS).
     void pickFiles('video/*,image/*').then((files) => {
@@ -34,11 +41,13 @@ export function MediaSheet({ target, onClose }: { target: 'main' | 'overlay'; on
     });
   };
 
+  /** Inserts a previously loaded project asset without re-importing its blob. */
   const reuse = (a: MediaAsset) => {
     insertMedia([a], target);
     onClose();
   };
 
+  /** Adds a solid-color item to the selected main/overlay destination. */
   const color = (c: string) => {
     addColorClip(c, target);
     onClose();
@@ -121,6 +130,7 @@ function MyClips({ target, onClose }: { target: 'main' | 'overlay'; onClose: () 
   );
 }
 
+/** Owns the object URL for one library poster and exposes it as an add button. */
 function ClipThumb({ row, onPick }: { row: ClipRow; onPick: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
 
@@ -143,10 +153,12 @@ function ClipThumb({ row, onPick }: { row: ClipRow; onPick: () => void }) {
   );
 }
 
+/** Paints the first generated thumbnail into a canvas, retrying on media-ready events. */
 function Thumb({ asset, onPick }: { asset: MediaAsset; onPick: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    /** Draws the first available source bitmap and reports whether one was found. */
     const draw = () => {
       const img = getThumbStrip(asset.id)?.images.find(Boolean);
       const c = ref.current;
@@ -157,6 +169,7 @@ function Thumb({ asset, onPick }: { asset: MediaAsset; onPick: () => void }) {
       return true;
     };
     if (draw()) return;
+    /** Repaints only when this asset's asynchronous thumbnail generation announces an update. */
     const onUpdate = (e: Event) => {
       if ((e as CustomEvent<string>).detail === asset.id) draw();
     };

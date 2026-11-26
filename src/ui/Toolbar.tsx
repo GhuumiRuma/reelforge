@@ -1,3 +1,8 @@
+/**
+ * Context-sensitive editor command strip. Root tools target the main clip under
+ * the playhead, while a selection switches the strip to type/track-specific
+ * commands and exposes the active sheet or toggle state through ARIA.
+ */
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowRightLeft,
@@ -70,14 +75,17 @@ interface Tool {
   filled?: boolean;
 }
 
+/** Reads the latest editor actions/state outside React for tool callbacks. */
 const ed = () => useEditor.getState();
 
+/** Toggles a sheet only when its ID and optional target argument both match. */
 function toggleSheet(id: SheetId, arg: string | null = null) {
   const s = ed();
   if (s.sheet === id && s.sheetArg === arg) s.closeSheet();
   else s.openSheet(id, arg);
 }
 
+/** Builds a Tool descriptor whose action opens or closes one SheetHost route. */
 const sheetTool = (sheet: SheetId, label: string, Icon: LucideIcon, arg: string | null = null): Tool => ({
   key: sheet,
   label,
@@ -123,14 +131,20 @@ const ROOT_TOOLS: Tool[] = [
   sheetTool('canvas', 'Canvas', Ratio),
 ];
 
+/** Opens a single-media picker and delegates replacement while preserving clip settings. */
 const replace = () => void pickFiles('video/*,image/*', false).then((f) => replaceSelected(f));
 
+/** Primes mobile text entry, pauses preview, and toggles the named text editor. */
 const editText = (id: string) => () => {
   primeKeyboard();
   pause();
   toggleSheet('textEdit', id);
 };
 
+/**
+ * Builds the available command list from item type, track kind, main-track index,
+ * and whether a keyframe exists at the current playhead.
+ */
 function itemTools(item: Item, kind: TrackKind, index: number, keyframeHere: boolean): Tool[] {
   const split: Tool = { key: 'split', label: 'Split', Icon: Scissors, run: splitAtPlayhead };
   const saveClip: Tool = { key: 'saveClip', label: 'Save clip', Icon: BookmarkPlus, run: () => void saveSelectedAsClip() };
@@ -217,6 +231,10 @@ const KIND_LABEL: Record<Item['type'], string> = {
   audio: 'Audio',
 };
 
+/**
+ * Reacts to selection, sheet, and playhead changes and remounts the scroller per
+ * tool group so newly selected item types start at their first available command.
+ */
 export function Toolbar() {
   const { item, kind, index } = useSelected();
   const sheet = useEditor((s) => s.sheet);

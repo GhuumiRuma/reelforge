@@ -1,3 +1,8 @@
+/**
+ * Appearance controls for the resolved theme and persistent Look. Previews use
+ * the same pure palette derivation as the page/timeline, so state shown in a tile
+ * remains representative of the value users can choose.
+ */
 import { MonitorSmartphone, Moon, RotateCcw, Sun } from 'lucide-react';
 import { useMemo, type CSSProperties, type ReactNode } from 'react';
 import { ACCENTS, CORNERS, STYLES, STYLE_IDS, accentName, accentSet, isDefaultLook } from '../state/appearance';
@@ -52,6 +57,7 @@ function mockVars(id: StyleId, theme: Theme, accent: string): CSSProperties {
 }
 
 /** A small editor made of the page's own tokens, so it follows every choice below it as it is made. */
+/** Token-driven editor miniature that updates with every committed appearance change. */
 function Preview() {
   return (
     <div className="look-preview" aria-hidden>
@@ -72,6 +78,7 @@ function Preview() {
   );
 }
 
+/** Renders the selectable surface-style palette tiles using the resolved current theme. */
 function StyleTiles() {
   const theme = useTheme((s) => s.theme);
   const style = useTheme((s) => s.look.style);

@@ -1,3 +1,8 @@
+/**
+ * On-device caption generation, styling, export, and replacement. Project sound
+ * sources determine eligibility before work starts; transcription owns cancellation,
+ * progress, wake locking, and one atomic insertion/replacement project edit.
+ */
 import { Captions, FileText, Trash } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { AudioItem, Project, TextStyle, VideoItem } from '../../types';
@@ -30,6 +35,7 @@ const SRC_MUSIC = 4;
 /** Which kinds of audible sound the project has, as a bitmask. Clips whose media isn't loaded yet count as having sound. */
 function soundSources(p: Project | null): number {
   if (!p) return 0;
+  /** Excludes muted or effectively silent items from source eligibility. */
   const audible = (it: VideoItem | AudioItem) => !it.muted && it.volume > 0.001;
   let m = 0;
   for (const it of [...p.main, ...p.overlays]) {
@@ -55,6 +61,7 @@ const BUSY = 'Captions are still being made — tap Cancel to stop';
 
 type Run = { kind: 'idle' } | { kind: 'running'; e: CaptionProgress | null } | { kind: 'error'; message: string };
 
+/** Controls persisted caption options and the idle/running/error generation state. */
 export function CaptionsSheet({ onClose }: { onClose: () => void }) {
   const [o, setO] = useState<CaptionOptions>(() => loadPrefs(CAPTION_PREFS_KEY, DEFAULT_CAPTION_OPTIONS));
   const [run, setRun] = useState<Run>({ kind: 'idle' });
@@ -81,12 +88,14 @@ export function CaptionsSheet({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
+  /** Merges one form change into local state and persisted caption preferences. */
   const update = (patch: Partial<CaptionOptions>) => {
     const next = { ...o, ...patch };
     setO(next);
     savePrefs(CAPTION_PREFS_KEY, next);
   };
 
+  /** Changes future caption style and, when present, all current caption items. */
   const pickPreset = (p: Preset) => {
     update({ presetId: p.id });
     if (!count) return;
@@ -98,6 +107,10 @@ export function CaptionsSheet({ onClose }: { onClose: () => void }) {
   const hasMusic = (sources & SRC_MUSIC) !== 0;
   const canRun = (sources & (SRC_CLIPS | SRC_VOICE)) !== 0 || (o.includeMusic && hasMusic);
 
+  /**
+   * Runs local transcription with progress/cancellation, then atomically adds or
+   * replaces caption items while preserving the first caption's placement/style.
+   */
   const generate = async () => {
     const p = useEditor.getState().project;
     if (!p || !canRun || ctl.current) return;
@@ -151,12 +164,14 @@ export function CaptionsSheet({ onClose }: { onClose: () => void }) {
     }
   };
 
+  /** Aborts transcription and immediately returns the sheet to configurable idle UI. */
   const cancel = () => {
     ctl.current?.abort();
     ctl.current = null;
     setRun({ kind: 'idle' });
   };
 
+  /** Builds an SRT from project captions and calls sharing inside the initiating tap. */
   const exportSrt = () => {
     const p = useEditor.getState().project;
     if (!p) return;
@@ -169,6 +184,7 @@ export function CaptionsSheet({ onClose }: { onClose: () => void }) {
     );
   };
 
+  /** Confirms and removes caption-flagged text in one undoable, selective edit. */
   const removeAll = async () => {
     const ok = await confirmDialog({
       title: `Delete ${count} caption${count === 1 ? '' : 's'}?`,

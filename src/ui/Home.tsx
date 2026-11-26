@@ -1,3 +1,8 @@
+/**
+ * Project/library landing screen. It owns non-editor persistence queries and
+ * app-install/backup notices, while route changes and pending-import handoff move
+ * selected work into the editor or clip studio.
+ */
 import { Clapperboard, Copy, DatabaseBackup, EllipsisVertical, Film, Pencil, Plus, RefreshCw, Scissors, ShieldCheck, Smartphone, Trash, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { experimental } from '@experimental';
@@ -27,6 +32,7 @@ const { HomeButton: ExperimentalButton } = experimental;
 
 type Tab = 'projects' | 'clips';
 
+/** Restores the Home tab for the browser session, falling back when storage is blocked. */
 function initialTab(): Tab {
   try {
     return sessionStorage.getItem(TAB_KEY) === 'clips' ? 'clips' : 'projects';
@@ -35,6 +41,11 @@ function initialTab(): Tab {
   }
 }
 
+/**
+ * Loads projects/storage notices and switches between project and clip-library
+ * views. New-project creation stays synchronous through the file picker, then the
+ * resulting files are consumed by Editor after the hash route changes.
+ */
 export function Home() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
@@ -44,6 +55,7 @@ export function Home() {
   // Bumped by a restore so the clip library, which loads when it appears, reads what was added.
   const [restores, setRestores] = useState(0);
 
+  /** Persists a tab choice only for this browser session and updates the rendered pane. */
   const pickTab = (t: Tab) => {
     setTab(t);
     try {
@@ -53,6 +65,7 @@ export function Home() {
     }
   };
 
+  /** Reloads the independent IndexedDB project list and device storage estimate. */
   const refresh = () => {
     void listProjects()
       .then(setProjects)
@@ -74,11 +87,16 @@ export function Home() {
     };
   }, []);
 
+  /** Records reminder acknowledgement and removes it from the current Home render. */
   const answerBackupReminder = () => {
     answerReminder();
     setRemind(false);
   };
 
+  /**
+   * Opens the picker inside the tap, creates an empty saved project, and stores the
+   * chosen files for Editor's one-time import rather than importing on Home.
+   */
   const startNew = () => {
     // The picker has to open synchronously inside the tap.
     void pickFiles('video/*,image/*').then(async (files) => {
@@ -207,6 +225,7 @@ export function Home() {
 
 // ---------------------------------------------------------------------------
 
+/** Presents the service-worker's downloaded update and invokes its reload bridge. */
 function UpdateNotice() {
   const needRefresh = useApp((s) => s.needRefresh);
   const updateSW = useApp((s) => s.updateSW);
@@ -225,6 +244,7 @@ function UpdateNotice() {
   );
 }
 
+/** Explains the post-update backup reminder and exposes open/dismiss actions. */
 function BackupReminder({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: () => void }) {
   return (
     <div className="notice" role="status">
@@ -243,6 +263,7 @@ function BackupReminder({ onOpen, onDismiss }: { onOpen: () => void; onDismiss: 
   );
 }
 
+/** Shows platform-specific installation guidance and consumes a captured PWA prompt. */
 function InstallNotice() {
   const installEvent = useApp((s) => s.installEvent);
   const [dismissed, setDismissed] = useState(() => {
@@ -254,6 +275,7 @@ function InstallNotice() {
   });
   if (dismissed || isStandalone() || isNativeApp() || (!installEvent && !isIOS && !isAndroid)) return null;
 
+  /** Persists the user's install-hint dismissal without making storage failures fatal. */
   const dismiss = () => {
     setDismissed(true);
     try {
@@ -263,6 +285,7 @@ function InstallNotice() {
     }
   };
 
+  /** Runs the retained browser install prompt in the tap and clears it after settlement. */
   const install = () => {
     const ev = useApp.getState().installEvent;
     if (!ev) return;
@@ -304,10 +327,12 @@ function InstallNotice() {
 
 // ---------------------------------------------------------------------------
 
+/** Project open row plus rename, duplicate, and destructive menu operations. */
 function ProjectRow({ project: p, all, onChanged }: { project: Project; all: Project[]; onChanged: () => void }) {
   const dur = projectDuration(p);
   const meta = `${dur > 0 ? formatDuration(dur) : 'Empty'} · edited ${ago(p.updatedAt)}`;
 
+  /** Resolves the project menu, then persists its storage operation and refreshes Home. */
   const menu = async () => {
     const choice = await menuDialog({
       title: p.name,
@@ -366,6 +391,11 @@ function ProjectRow({ project: p, all, onChanged }: { project: Project; all: Pro
 const COVER_W = 112;
 const COVER_H = 144;
 
+/**
+ * Draws the project's first main item into a fixed cover canvas. Thumbnail events
+ * cause a redraw without retaining an object URL, and the effect is detached when
+ * the first media ID changes or the row unmounts.
+ */
 function Cover({ project }: { project: Project }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
@@ -373,6 +403,7 @@ function Cover({ project }: { project: Project }) {
 
   useEffect(() => {
     if (!first) return;
+    /** Paints a color clip or the nearest generated thumbnail and reports readiness. */
     const draw = (): boolean => {
       const c = ref.current;
       const ctx = c?.getContext('2d');
@@ -399,6 +430,7 @@ function Cover({ project }: { project: Project }) {
     }
     if (first.type === 'color') return;
     const id = first.mediaId;
+    /** Redraws and reveals the cover when this row's thumbnail media becomes ready. */
     const onUpdate = (e: Event) => {
       if ((e as CustomEvent<string>).detail === id && draw()) setReady(true);
     };
@@ -417,10 +449,12 @@ function Cover({ project }: { project: Project }) {
 
 // ---------------------------------------------------------------------------
 
+/** Builds the locale-aware base name offered for a newly created project. */
 function defaultName(): string {
   return `Video – ${new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
 }
 
+/** Avoids colliding saved project names by adding the first available numeric suffix. */
 function uniqueName(base: string, projects: Project[]): string {
   const names = new Set(projects.map((p) => p.name));
   if (!names.has(base)) return base;

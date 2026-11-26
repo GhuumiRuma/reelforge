@@ -1,5 +1,13 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
+/**
+ * Capacitor packaging contract for the Android shell.
+ *
+ * The origin is intentionally fixed because Capacitor WebView storage is scoped
+ * to it; changing the scheme or hostname would make existing projects appear to
+ * disappear after an app update. The web build also remains the only source of
+ * native app assets, avoiding a second UI implementation.
+ */
 const config: CapacitorConfig = {
   appId: 'io.github.monicariverawork.reelforge',
   appName: 'ReelForge',

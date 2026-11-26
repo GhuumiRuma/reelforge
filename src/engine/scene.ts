@@ -1,3 +1,9 @@
+/**
+ * Scene-graph builder for a project frame. It samples item state, acquires
+ * image/text frames through caller-owned providers/caches, resolves
+ * crop/transform/animation/background semantics, and produces compositor
+ * commands plus editor hit quads without issuing WebGL work or reading a clock.
+ */
 import type { AnimType, ImageItem, MainItem, MediaAsset, OverlayItem, Project, TextItem, VideoItem, VisualItem } from '../types';
 import { readBackgroundRemoval } from '../lib/background';
 import { activeMain, itemEnd, sampleKeyframes, sourceTime } from '../lib/layout';
@@ -9,27 +15,33 @@ import type { DrawLayer, FrameSpec, Page, TexRef } from './gl';
 const EPS = 1e-6;
 const DEG = Math.PI / 180;
 
+/** A ready browser image source plus a version token; optional matte shares the compositing UV space. */
 export interface FrameSource {
   source: TexImageSource;
   version: number | string;
   matte?: { source: TexImageSource; version: number | string } | null;
 }
 
+/** Synchronous frame lookup contract; decoders report `null` until asynchronous preparation is ready. */
 export interface FrameProvider {
   /** Decoded frame of a video item at the given source time (seconds), or null if not ready. */
   video(item: VideoItem, sourceTime: number): FrameSource | null;
+  /** Cached image asset/frame for an image item, or null while the asset is loading. */
   image(item: ImageItem): FrameSource | null;
 }
 
+/** Frame dimensions and resource accessors required to resolve a project into draw commands. */
 export interface SceneContext {
   W: number;
   H: number;
+  /** Returns current media metadata, or undefined while an item has not been registered. */
   asset(id: string): MediaAsset | undefined;
   provider: FrameProvider;
   texts: TextCache;
   seed: number;
 }
 
+/** Rotatable layer bounds used by editor picking in frame-pixel coordinates. */
 export interface HitQuad {
   id: string;
   kind: 'main' | 'overlays' | 'texts';
@@ -42,6 +54,7 @@ export interface HitQuad {
   rot: number;
 }
 
+/** Resolved item transform/opacity and optional text typewriter state at one timeline instant. */
 export interface Pose {
   x: number;
   y: number;
@@ -52,6 +65,12 @@ export interface Pose {
   chars: number | null;
 }
 
+/**
+ * Mutates a resolved pose with one entrance/exit animation at normalized
+ * progress `u`. Exit calls use the remaining fraction, so animation formulas
+ * can be mirrored without separate phase-specific code. Non-text typewriter
+ * falls back to an opacity animation.
+ */
 function applyAnim(p: Pose, item: VisualItem, type: AnimType, u: number, entering: boolean) {
   const e = easeOut(u);
   const dir = entering ? 1 : -1;
@@ -105,7 +124,13 @@ function applyAnim(p: Pose, item: VisualItem, type: AnimType, u: number, enterin
   }
 }
 
-/** Keyframed transform plus slow motion, without in/out animations. Selection boxes follow this. */
+/**
+ * Resolves the item's keyframed base transform plus continuous pan/zoom motion.
+ *
+ * Timeline `t` is converted to item-local time; this returns a new pose and
+ * deliberately excludes entrance/exit animations so editor selection geometry
+ * remains stable and grabbable while those effects move the visible layer.
+ */
 export function restPose(item: VisualItem, t: number): Pose {
   const local = t - item.start;
   const kv = sampleKeyframes(item.keyframes, local);
@@ -143,11 +168,20 @@ export function restPose(item: VisualItem, t: number): Pose {
   return pose;
 }
 
+/**
+ * Reports whether a visual item is inside either configured in/out interval.
+ * Durations are capped at the item's lifetime, including for very short clips.
+ */
 const animating = (item: VisualItem, local: number) =>
   (item.animIn.type !== 'none' && local < Math.min(item.animIn.duration, item.duration)) ||
   (item.animOut.type !== 'none' && local > item.duration - Math.min(item.animOut.duration, item.duration));
 
-/** Animated transform of a visual item at timeline time t. */
+/**
+ * Resolves the rendered transform at timeline time `t`, starting from
+ * `restPose` and applying each capped entrance/exit effect in order (effects
+ * may overlap on very short items). The returned object is independent of the
+ * source item.
+ */
 export function itemPose(item: VisualItem, t: number): Pose {
   const local = t - item.start;
   const pose = restPose(item, t);
@@ -165,9 +199,17 @@ export function itemPose(item: VisualItem, t: number): Pose {
 // ---------------------------------------------------------------------------
 // Text textures
 
+/** Canvas backing accepted for visible-preview text and off-screen rasterization. */
 type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
 let textVersion = 0;
 
+/**
+ * Estimates a supersampling factor covering base, keyframed, zoom, and motion
+ * scale so cached text remains sharp at the largest likely displayed size.
+ *
+ * The result is quantized in quarter-log2 steps and bounded to avoid tiny or
+ * unbounded raster canvases.
+ */
 function renderScaleFor(item: TextItem): number {
   let s = Math.abs(item.transform.scale);
   for (const k of item.keyframes) s = Math.max(s, Math.abs(k.scale));
@@ -178,13 +220,29 @@ function renderScaleFor(item: TextItem): number {
   return clamp(q, 0.25, 6);
 }
 
-/** Rasterizes text items into canvases, re-rendering only when their appearance changes. */
+/**
+ * Owns raster canvases for text items and invalidates them from an appearance
+ * signature rather than render frequency.
+ *
+ * Each preview/export pass owns its own instance, while the module's global
+ * version counter prevents stale GPU entries across instances. Canvas pixels
+ * are regenerated only when text/style, frame size, scale, word highlight,
+ * visible character count, font readiness, or word data changes.
+ */
 export class TextCache {
   private map = new Map<string, { canvas: AnyCanvas; sig: string; version: number; upscale: number; rs: number; used: number }>();
   private tick = 0;
 
+  /** Allows preview/export to choose an HTML or worker/off-screen canvas factory. */
   constructor(private create: () => AnyCanvas = () => document.createElement('canvas')) {}
 
+  /**
+   * Returns a versioned texture reference and unscaled frame-pixel dimensions.
+   *
+   * `activeWord` and `chars` control caption highlighting/typewriter output.
+   * Re-rendering increments a process-global version so Compositor uploads the
+   * new pixels even when an item's id is unchanged.
+   */
   get(item: TextItem, W: number, H: number, activeWord: number, chars: number | null) {
     const rs = renderScaleFor(item);
     const ready = isFontReady(item.style.font, item.style.weight, item.style.italic);
@@ -213,12 +271,17 @@ export class TextCache {
     return { ref, w: (e.canvas.width * e.upscale) / rs, h: (e.canvas.height * e.upscale) / rs };
   }
 
+  /**
+   * Advances the logical use counter and removes entries unused for about 300
+   * sweeps. The periodic check keeps per-frame cache maintenance small.
+   */
   sweep() {
     this.tick++;
     if (this.tick % 300 !== 0) return;
     for (const [k, e] of this.map) if (this.tick - e.used > 300) this.map.delete(k);
   }
 
+  /** Drops every canvas reference immediately; callers use it during engine disposal. */
   clear() {
     this.map.clear();
   }
@@ -227,12 +290,18 @@ export class TextCache {
 // ---------------------------------------------------------------------------
 // Frame building
 
+/** Frame-pixel intrinsic layer size and normalized source UV rectangle. */
 interface Base {
   w: number;
   h: number;
   uv: [number, number, number, number];
 }
 
+/**
+ * Converts asset dimensions, crop, fit, and flip settings into a frame-pixel
+ * layer size plus source UV rectangle. Crop dimensions are clamped away from
+ * zero to avoid division/quad collapse.
+ */
 function baseSize(item: MainItem | OverlayItem, ctx: SceneContext): Base {
   const { W, H } = ctx;
   const c = item.crop;
@@ -257,12 +326,19 @@ function baseSize(item: MainItem | OverlayItem, ctx: SceneContext): Base {
   return { w: sw * s, h: sh * s, uv: [x0, y0, x1, y1] };
 }
 
+/** Texture/matte pair resolved from a provider, with solid-color layers represented by `null`. */
 interface ItemTexture {
   ref: TexRef;
   matte: TexRef | null;
 }
 
-/** undefined = media not ready yet; null = solid color */
+/**
+ * Resolves a media item's texture key and optional subject matte.
+ *
+ * `undefined` means the frame is still loading, while `null` represents an
+ * intentional solid-color layer. Video source time is clamped to the decoded
+ * asset endpoint to avoid seeking past the final frame.
+ */
 function itemTexture(item: MainItem | OverlayItem, t: number, ctx: SceneContext): ItemTexture | null | undefined {
   if (item.type === 'color') return null;
   if (item.type === 'image') {
@@ -290,6 +366,13 @@ function itemTexture(item: MainItem | OverlayItem, t: number, ctx: SceneContext)
     : undefined;
 }
 
+/**
+ * Translates item pose/media state into GPU-ready layer parameters.
+ *
+ * Main-track blend is forced to normal, while overlays retain their configured
+ * mode. Filter, shape mask, chroma key, and subject-matte settings are resolved
+ * here so `Compositor` only consumes explicit draw values.
+ */
 function makeLayer(item: MainItem | OverlayItem, pose: Pose, base: Base, ctx: SceneContext, tex: ItemTexture | null, overlay: boolean): DrawLayer {
   const removal = readBackgroundRemoval(item);
   return {
@@ -316,6 +399,11 @@ function makeLayer(item: MainItem | OverlayItem, pose: Pose, base: Base, ctx: Sc
   };
 }
 
+/**
+ * Conservatively determines whether an opaque, untransformed layer fills the
+ * canvas. Returning false is safe (it merely enables a blurred backdrop);
+ * rotations, alpha, masks, keying, and cutout all disqualify a layer.
+ */
 function covers(L: DrawLayer, W: number, H: number): boolean {
   const deg = (((L.rot / DEG) % 360) + 360) % 360;
   if (deg > 0.01 && deg < 359.99) return false;
@@ -325,13 +413,15 @@ function covers(L: DrawLayer, W: number, H: number): boolean {
   return L.cx - hw <= 0.5 && L.cx + hw >= W - 0.5 && L.cy - hh <= 0.5 && L.cy + hh >= H - 0.5;
 }
 
+/** Copies a resolved draw layer's identity and geometry into an editor hit-test record. */
 function quadOf(id: string, kind: HitQuad['kind'], L: Pick<DrawLayer, 'cx' | 'cy' | 'w' | 'h' | 'rot'>): HitQuad {
   return { id, kind, cx: L.cx, cy: L.cy, w: Math.abs(L.w), h: Math.abs(L.h), rot: L.rot };
 }
 
 /**
- * Hit/selection quad at the item's rest pose, so an item stays visible and grabbable while an
- * in/out animation (pop, zoom, spin…) has it scaled down or off to the side.
+ * Builds a selection quad at the rendered pose normally, but at the stable rest
+ * pose while entrance/exit animation is active. This keeps an item grabbable
+ * when a visible pop/zoom/spin pose is tiny or off to one side.
  */
 function restQuad(
   id: string,
@@ -354,6 +444,13 @@ function restQuad(
   });
 }
 
+/**
+ * Resolves one main-track item into a page and registers its editor quad.
+ *
+ * A not-ready texture still produces a quad but an empty page. When a ready
+ * image does not cover the output and blur mode is selected, a zoomed copy of
+ * that layer (without masks/keying/cutout) is supplied as the backdrop.
+ */
 function mainPage(item: MainItem, t: number, p: Project, ctx: SceneContext, quads: HitQuad[]): Page {
   const pose = itemPose(item, t);
   const base = baseSize(item, ctx);
@@ -382,10 +479,17 @@ function mainPage(item: MainItem, t: number, p: Project, ctx: SceneContext, quad
   return { background, layers: [layer] };
 }
 
+/** Filters items active at `t`, clips endpoints with epsilon, and orders them by editor lane. */
 function activeSorted<T extends { start: number; duration: number; lane: number }>(items: T[], t: number): T[] {
   return items.filter((it) => t >= it.start - EPS && t < itemEnd(it) - EPS).sort((a, b) => a.lane - b.lane);
 }
 
+/**
+ * Rasterizes/resolves a text item and constructs its layer plus selection quad.
+ *
+ * Caption word time is converted from project to item-local time to select a
+ * highlight, while typewriter character count comes from the animated pose.
+ */
 function textLayer(item: TextItem, t: number, ctx: SceneContext, quads: HitQuad[]): DrawLayer | null {
   const pose = itemPose(item, t);
   const local = t - item.start;
@@ -417,6 +521,15 @@ function textLayer(item: TextItem, t: number, ctx: SceneContext, quads: HitQuad[
   return L;
 }
 
+/**
+ * Builds every CPU-side draw command and editor hit quad for timeline time `t`.
+ *
+ * `activeMain` determines a one- or two-page scene; transition progress is
+ * eased, then overlays and text are appended in lane order so they remain above
+ * the main transition. Provider misses intentionally produce empty main pages
+ * or omit overlay layers until the asynchronous owner supplies a frame. The
+ * function performs no rendering and does not mutate `p`.
+ */
 export function buildFrame(p: Project, t: number, ctx: SceneContext): { spec: FrameSpec; quads: HitQuad[] } {
   const quads: HitQuad[] = [];
   const pages: Page[] = [];
@@ -452,7 +565,12 @@ export function buildFrame(p: Project, t: number, ctx: SceneContext): { spec: Fr
   };
 }
 
-/** Whether point (px, py) in frame pixels lies inside a hit quad (with optional padding). */
+/**
+ * Tests a frame-pixel point in the inverse-rotated local space of a hit quad.
+ *
+ * `pad` expands every edge and is useful for touch targets; dimensions are
+ * already normalized to positive values when the quad is produced.
+ */
 export function hitTest(q: HitQuad, px: number, py: number, pad = 0): boolean {
   const c = Math.cos(-q.rot);
   const s = Math.sin(-q.rot);

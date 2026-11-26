@@ -1,3 +1,8 @@
+/**
+ * Editor route coordinator. It loads the project and assets before publishing the
+ * project to `useEditor`, mounts preview/timeline/tool surfaces, and keeps route
+ * teardown, browser back handling, shortcuts, and save flushing in one lifecycle.
+ */
 import { ChevronDown, ChevronLeft, Download, LoaderCircle, Maximize2, Minimize2, Pause, Play, Redo2, Undo2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { backDepth, settled, useBack } from '../lib/back';
@@ -17,6 +22,11 @@ import { EXPORT_DEFAULTS, EXPORT_PREFS_KEY, resolutionLabel } from './sheets/Exp
 import { Timeline } from './Timeline';
 import { Toolbar } from './Toolbar';
 
+/**
+ * Opens one project by route ID. Mount-liveness guards prevent asynchronous loading
+ * from publishing after route teardown, and cleanup closes/saves the editor state so
+ * the next route cannot observe stale project data.
+ */
 export function Editor({ id }: { id: string }) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing'>('loading');
   const [focus, setFocus] = useState(false);
@@ -83,6 +93,7 @@ export function Editor({ id }: { id: string }) {
     );
   }
 
+  /** Clears selection-only editor UI before entering preview-focused mode. */
   const toggleFocus = () => {
     if (!focus) {
       useEditor.getState().closeSheet();
@@ -116,6 +127,7 @@ async function leave() {
 
 // ---------------------------------------------------------------------------
 
+/** Project naming, export-setting access, and save entry points for the editor route. */
 function TopBar() {
   const name = useEditor((s) => s.project?.name ?? '');
   const sheet = useEditor((s) => s.sheet);
@@ -123,6 +135,7 @@ function TopBar() {
   const res = useMemo(() => loadPrefs(EXPORT_PREFS_KEY, EXPORT_DEFAULTS).resolution, [sheet]);
   const openSheet = useEditor((s) => s.openSheet);
 
+  /** Writes a changed, trimmed name through project history/persistence. */
   const rename = async () => {
     const p = useEditor.getState().project;
     if (!p) return;
@@ -158,6 +171,7 @@ function TopBar() {
   );
 }
 
+/** Controls playback, undo/redo availability, focus mode, and the shared clock label. */
 function Transport({ focus, onToggleFocus }: { focus: boolean; onToggleFocus: () => void }) {
   const playing = useTime((s) => s.playing);
   const canUndo = useEditor((s) => s.past.length > 0 && !s.gestureBase);
@@ -191,6 +205,7 @@ function Transport({ focus, onToggleFocus }: { focus: boolean; onToggleFocus: ()
   );
 }
 
+/** Shows tenth-second reactive playhead time without depending on the entire project. */
 function TimeLabel() {
   const t = useTime((s) => Math.floor(s.time * 10) / 10);
   const total = useEditor((s) => (s.project ? projectDuration(s.project) : 0));
@@ -205,9 +220,15 @@ function TimeLabel() {
 // ---------------------------------------------------------------------------
 // Keyboard shortcuts (tablets with keyboards, desktop browsers)
 
+/**
+ * Registers editor-wide keyboard commands after assets are ready. Form/dialog/sheet
+ * targets are respected so text input, modal controls, and browser back entries do
+ * not unexpectedly trigger timeline or selection commands.
+ */
 function useShortcuts(active: boolean) {
   useEffect(() => {
     if (!active) return;
+    /** Translates one unconsumed keyboard event into playback, history, or edit actions. */
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing) return;
       const target = e.target instanceof Element ? e.target : null;

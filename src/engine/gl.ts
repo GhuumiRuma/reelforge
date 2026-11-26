@@ -1,6 +1,13 @@
+/**
+ * WebGL2 frame compositor for both interactive preview and offline export.
+ * Scene code supplies a resolved draw plan; this module owns
+ * texture upload/versioning, premultiplied blending, blur/transition targets,
+ * shader setup, and context-loss cleanup.
+ */
 import type { BlendMode, MaskShape, TransitionType } from '../types';
 import type { FxParams } from '../lib/filters';
 
+/** A cache identity, image source, and version token used to upload textures only when changed. */
 export interface TexRef {
   key: string;
   source: TexImageSource;
@@ -8,6 +15,7 @@ export interface TexRef {
   mip?: boolean;
 }
 
+/** Fully resolved CPU-side layer parameters consumed by the layer fragment shader. */
 export interface DrawLayer {
   tex: TexRef | null;
   color: [number, number, number];
@@ -27,11 +35,13 @@ export interface DrawLayer {
   cutout: { matte: TexRef | null; feather: number } | null;
 }
 
+/** A main-track page rendered independently before an optional transition between two items. */
 export interface Page {
   background: { blur: number; layer: DrawLayer } | null;
   layers: DrawLayer[];
 }
 
+/** One complete compositor command: base page(s), transition state, and already-layered overlays/text. */
 export interface FrameSpec {
   width: number;
   height: number;
@@ -42,6 +52,7 @@ export interface FrameSpec {
   seed: number;
 }
 
+/** Numeric shader discriminants; values must stay aligned with `TRANS_FS` branches. */
 export const TRANSITION_CODES: Record<TransitionType, number> = {
   none: 0,
   fade: 1,
@@ -62,6 +73,7 @@ export const TRANSITION_CODES: Record<TransitionType, number> = {
   blur: 16,
 };
 
+/** Shared quad vertex shader: converts frame-pixel transforms to clip space and preserves source UV rectangles. */
 const VS = `#version 300 es
 layout(location = 0) in vec2 a_pos;
 uniform mat3 u_mat;
@@ -77,6 +89,12 @@ void main() {
   v_local = a_pos;
 }`;
 
+/**
+ * Layer shader implementing solid/image sampling, filters, keying, matte
+ * masking, shape masks, and premultiplied alpha. Within it, `hash` supplies
+ * deterministic per-pixel grain and `toUV` maps RGB key values into chroma
+ * distance space.
+ */
 const LAYER_FS = `#version 300 es
 precision highp float;
 in vec2 v_uv;
@@ -196,6 +214,7 @@ void main() {
   o = vec4(clamp(rgb, 0.0, 1.0) * a, a);
 }`;
 
+/** Low-cost separable Gaussian blur pass; callers run horizontal and vertical passes in alternating targets. */
 const BLUR_FS = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
@@ -211,6 +230,12 @@ void main() {
   o = c;
 }`;
 
+/**
+ * Transition shader implementing every `TRANSITION_CODES` value on two page
+ * textures. Its helpers clamp transformed samples to black (`outside`/`sa`/
+ * `sb`), compensate zoom/rotation for aspect (`xform`), perform a radial blur
+ * average (`blurred`), and expand a soft wipe edge (`wipe`).
+ */
 const TRANS_FS = `#version 300 es
 precision highp float;
 in vec2 v_uv;
@@ -291,10 +316,18 @@ void main() {
   }
 }`;
 
+/**
+ * Compiles/links one shader pair and caches uniform lookups.
+ *
+ * Shader objects are deleted after linking while the resulting `prog` is owned
+ * by this wrapper for the compositor lifetime. Compilation/link errors include
+ * driver output except when the context is already lost.
+ */
 class Program {
   readonly prog: WebGLProgram;
   private locs = new Map<string, WebGLUniformLocation | null>();
 
+  /** Compiles and links `vs`/`fs` under the supplied live WebGL2 context. */
   constructor(
     private gl: WebGL2RenderingContext,
     vs: string,
@@ -302,6 +335,7 @@ class Program {
   ) {
     const p = gl.createProgram();
     if (!p) throw new Error('createProgram failed');
+    /** Compiles, reports, and attaches one shader to the pending program. */
     const compile = (type: number, src: string) => {
       const s = gl.createShader(type)!;
       gl.shaderSource(s, src);
@@ -323,6 +357,10 @@ class Program {
     this.prog = p;
   }
 
+  /**
+   * Returns a memoized uniform location. `null` is cached too, avoiding repeated
+   * driver lookups for optimized-out uniforms in optional shader branches.
+   */
   u(name: string): WebGLUniformLocation | null {
     let l = this.locs.get(name);
     if (l === undefined) {
@@ -333,6 +371,7 @@ class Program {
   }
 }
 
+/** A framebuffer texture pair used for off-screen page and blur passes. */
 interface Fbo {
   fb: WebGLFramebuffer;
   tex: WebGLTexture;
@@ -340,6 +379,7 @@ interface Fbo {
   h: number;
 }
 
+/** Cached texture GPU object plus upload dimensions/version and last frame use. */
 interface TexEntry {
   tex: WebGLTexture;
   version: number | string | null;
@@ -348,6 +388,7 @@ interface TexEntry {
   used: number;
 }
 
+/** Reads intrinsic dimensions of supported browser/WebCodecs texture sources. */
 function sourceSize(s: TexImageSource): [number, number] {
   if (typeof HTMLVideoElement !== 'undefined' && s instanceof HTMLVideoElement) return [s.videoWidth, s.videoHeight];
   if (typeof VideoFrame !== 'undefined' && s instanceof VideoFrame) return [s.displayWidth, s.displayHeight];
@@ -356,6 +397,7 @@ function sourceSize(s: TexImageSource): [number, number] {
   return [o.width, o.height];
 }
 
+/** Fixed dimming grade applied to the enlarged, blurred page behind a contained main item. */
 const DIM_FX: FxParams = {
   brightness: 0,
   contrast: 0,
@@ -375,10 +417,12 @@ const DIM_FX: FxParams = {
   splitAmount: 0,
 };
 
+/** Canvas types accepted for visible preview and encoder-backed off-screen rendering. */
 export type CompositorCanvas = HTMLCanvasElement | OffscreenCanvas;
 
 /** WebGL2 compositor shared by the live preview and the exporter. */
 export class Compositor {
+  /** Live WebGL2 context exposed for loss checks; callers must not replace it. */
   gl!: WebGL2RenderingContext;
   private layerProg!: Program;
   private blurProg!: Program;
@@ -394,8 +438,14 @@ export class Compositor {
   private resW = 1;
   private resH = 1;
   private seed = 0;
+  /** Observer notified after GPU programs/caches are recreated following context restoration. */
   onRestored?: () => void;
 
+  /**
+   * Creates a high-performance, non-antialiased WebGL2 context and installs
+   * context-loss recovery. `preserve` must be true when the drawing buffer is
+   * consumed asynchronously by an image or video encoder.
+   */
   constructor(
     readonly canvas: CompositorCanvas,
     opts: { preserve?: boolean } = {},
@@ -422,6 +472,10 @@ export class Compositor {
     });
   }
 
+  /**
+   * Recreates GPU-only shader, VAO, quad-buffer, and state after construction or
+   * context restoration. CPU texture/frame caches are already empty on restore.
+   */
   private init() {
     const gl = this.gl;
     this.layerProg = new Program(gl, VS, LAYER_FS);
@@ -438,10 +492,12 @@ export class Compositor {
     gl.disable(gl.CULL_FACE);
   }
 
+  /** Whether the GPU context is currently unavailable; render calls become no-ops while lost. */
   get lost(): boolean {
     return this.gl.isContextLost();
   }
 
+  /** Allocates a clamp-to-edge, linear-filtered RGBA texture for upload or render targets. */
   private newTexture(): WebGLTexture {
     const gl = this.gl;
     const tex = gl.createTexture()!;
@@ -453,6 +509,15 @@ export class Compositor {
     return tex;
   }
 
+  /**
+   * Gets or creates the GPU texture for a `TexRef` and uploads the source only
+   * when its version changed.
+   *
+   * Invalid/not-ready dimensions retain a previous upload when available. An
+   * upload exception similarly allows a stale texture to avoid blanking the
+   * frame, except for a never-uploaded entry. Mips are generated only by refs
+   * opting into them, and the entry's last-use frame drives later collection.
+   */
   private upload(ref: TexRef): TexEntry | null {
     const gl = this.gl;
     let e = this.textures.get(ref.key);
@@ -487,6 +552,10 @@ export class Compositor {
     return e;
   }
 
+  /**
+   * Immediately deletes a specific cached texture, for example when a preview
+   * video slot is destroyed. The ref key can safely be recreated on a later frame.
+   */
   releaseTexture(key: string) {
     const e = this.textures.get(key);
     if (e) {
@@ -495,6 +564,7 @@ export class Compositor {
     }
   }
 
+  /** Periodically releases textures untouched for 600 render frames to bound persistent GPU uploads. */
   private gc() {
     if (this.frame % 120 !== 0) return;
     for (const [k, e] of this.textures) {
@@ -505,6 +575,11 @@ export class Compositor {
     }
   }
 
+  /**
+   * Returns a framebuffer with the exact dimensions or recreates it after a
+   * render-size change. Textures allocated for obsolete sizes are deleted
+   * before the replacement is installed.
+   */
   private ensureFbo(f: Fbo | null, w: number, h: number): Fbo {
     const gl = this.gl;
     if (f && f.w === w && f.h === h) return f;
@@ -521,7 +596,13 @@ export class Compositor {
     return { fb, tex, w, h };
   }
 
-  /** Binds a render target. Coordinates are always expressed in frame pixels (resW × resH). */
+  /**
+   * Binds an off-screen target or the canvas and selects its viewport.
+   *
+   * Layer coordinates always remain in full-frame pixels (`resW`/`resH`);
+   * off-screen targets flip the vertex Y convention so all passes retain top-left
+   * scene coordinates.
+   */
   private bind(target: Fbo | null, vw: number, vh: number) {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fb : null);
@@ -529,6 +610,7 @@ export class Compositor {
     this.flip = target ? -1 : 1;
   }
 
+  /** Selects premultiplied-alpha blend factors for the requested high-level blend mode. */
   private setBlend(mode: BlendMode) {
     const gl = this.gl;
     gl.enable(gl.BLEND);
@@ -538,6 +620,15 @@ export class Compositor {
     else gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   }
 
+  /**
+   * Uploads and draws one layer, or draws `raw` for an internal render-target
+   * texture. The method is the CPU/GPU bridge for transform, crop, filter,
+   * chroma/cutout, masks, anti-aliasing, and blend uniforms.
+   *
+   * Invisible/tiny layers return before allocation. Rotated quads receive
+   * edge-AA in the shader, and all color operations use the shader's
+   * premultiplied-alpha contract.
+   */
   private drawLayer(L: DrawLayer, raw?: { tex: WebGLTexture; w: number; h: number }) {
     if (L.opacity <= 0.001 || Math.abs(L.w) < 0.5 || Math.abs(L.h) < 0.5) return;
     const gl = this.gl;
@@ -608,6 +699,10 @@ export class Compositor {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
+  /**
+   * Draws the bound quad with fullscreen coordinates. Programs that call it must
+   * already have bound their own fragment samplers/uniforms.
+   */
   private fullscreen(P: Program) {
     const gl = this.gl;
     gl.uniformMatrix3fv(P.u('u_mat'), false, [1, 0, 0, 0, 1, 0, 0, 0, 1]);
@@ -617,6 +712,14 @@ export class Compositor {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
+  /**
+   * Renders an enlarged page layer at downscaled resolution, performs
+   * separable blur passes in ping-pong buffers, and composites the result into
+   * `target` with a fixed dimming grade.
+   *
+   * Lower-resolution targets make blur cost approximately proportional to the
+   * chosen pass count rather than full output pixels; source aspect is retained.
+   */
   private drawBlurBackground(bg: { blur: number; layer: DrawLayer }, target: Fbo | null, W: number, H: number) {
     const gl = this.gl;
     const div = 4 + bg.blur * 14;
@@ -666,6 +769,7 @@ export class Compositor {
     );
   }
 
+  /** Clears and renders one page to the specified target, including its optional blurred backdrop. */
   private renderPage(page: Page | undefined, target: Fbo | null, W: number, H: number, clear: [number, number, number]) {
     const gl = this.gl;
     this.bind(target, W, H);
@@ -676,6 +780,15 @@ export class Compositor {
     for (const L of page.layers) this.drawLayer(L);
   }
 
+  /**
+   * Renders a complete `FrameSpec` into the canvas.
+   *
+   * Transition pages are rendered into reusable full-resolution targets and
+   * combined through the transition shader; otherwise page zero draws directly.
+   * Overlays/text in `spec.layers` draw after transition compositing. The call
+   * mutates canvas/GPU state and returns no value; it intentionally no-ops while
+   * the context is lost, after which restoration invokes `onRestored`.
+   */
   render(spec: FrameSpec) {
     const gl = this.gl;
     if (gl.isContextLost()) return;
@@ -718,6 +831,11 @@ export class Compositor {
     this.gc();
   }
 
+  /**
+   * Releases cached textures and off-screen attachments, then asks the
+   * optional context-loss extension to release the remaining GPU context.
+   * The compositor is not reusable after this call.
+   */
   dispose() {
     const gl = this.gl;
     for (const e of this.textures.values()) gl.deleteTexture(e.tex);

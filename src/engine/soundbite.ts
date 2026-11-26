@@ -1,3 +1,8 @@
+/**
+ * Validates, suggests, and encodes audio-only excerpts from media already in the
+ * project. The encoder deliberately reuses the normal audio mixer so fades,
+ * speed changes, resampling, and channel mapping match the rest of the engine.
+ */
 import { ALL_FORMATS, AudioBufferSource, BlobSource, BufferTarget, Input, Mp4OutputFormat, Output, Quality } from 'mediabunny';
 import type { MediaAsset, Project, VideoItem } from '../types';
 import { audioItem, newProject } from '../lib/defaults';
@@ -12,13 +17,21 @@ const SUGGESTED_LENGTH = 5;
 /** Chrome only shares .m4a files with this type. */
 const M4A_TYPE = 'audio/x-m4a';
 
+/** The normalized range of a valid form submission, or the field and message that must be corrected. */
 export type SoundbiteCheck =
   | { ok: true; start: number; end: number }
   | { ok: false; field: 'start' | 'end'; error: string };
 
+/** Rounds user-entered media times to hundredths to keep form values stable without discarding sub-second input. */
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
-/** Checks typed start and end times, counted from the start of a video `duration` seconds long. */
+/**
+ * Parses and validates form times relative to a source video.
+ *
+ * Times are rounded to 0.01 s and the end may slightly exceed `duration` so a
+ * typist can finish on the exact media endpoint. The result is purely derived:
+ * it does not mutate the item and is suitable for driving field-level UI errors.
+ */
 export function checkSoundbite(startText: string, endText: string, duration: number): SoundbiteCheck {
   const s = parseTime(startText);
   if (s === null) return { ok: false, field: 'start', error: 'Type a start time like 42.5, or 102.5 for 1:02.5.' };
@@ -33,14 +46,24 @@ export function checkSoundbite(startText: string, endText: string, duration: num
   return { ok: true, start, end };
 }
 
-/** How a typed time reads once its field is left ("42.5" → "00:42.5"). Text that isn't a time is kept. */
+/**
+ * Formats a valid typed time when a field loses focus (for example, "42.5" becomes
+ * "00:42.5"). Invalid text is intentionally preserved; values in the endpoint
+ * slack are displayed as the real duration.
+ */
 export function tidyTime(text: string, duration: number): string {
   const v = parseTime(text);
   if (v === null) return text;
   return formatClock(v > duration && v <= duration + END_SLACK ? duration : v);
 }
 
-/** First guess: 5 seconds from the playhead, or from the clip's first frame when the playhead is elsewhere. */
+/**
+ * Chooses an initial five-second range without mutating the video item.
+ *
+ * If the playhead is inside the timeline item, the suggestion begins at that
+ * source-frame time; otherwise it begins at the clip's in point. Both endpoints
+ * are constrained to the decoded media duration, with a tenth-second start grid.
+ */
 export function suggestSoundbite(v: VideoItem, t: number, duration: number): { start: number; end: number } {
   const at = t >= v.start && t < itemEnd(v) ? sourceTime(v, t) : v.in;
   const latest = Math.max(0, Math.floor((duration - MIN_DUR) * 10 + 1e-6) / 10);
@@ -48,26 +71,35 @@ export function suggestSoundbite(v: VideoItem, t: number, duration: number): { s
   return { start, end: Math.min(duration, start + SUGGESTED_LENGTH) };
 }
 
+/** Cancellation and progress callbacks shared by the output encoders. */
 interface Progress {
   signal?: AbortSignal;
   onProgress?: (fraction: number) => void;
 }
 
+/** Format negotiated with the browser/AAC polyfill before constructing a buffer source. */
 interface AacFormat {
   sampleRate: number;
   numberOfChannels: number;
   bitrate: number;
 }
 
+/** Signals that the requested interval yielded no non-null PCM mix blocks. */
 export class NoSoundError extends Error {
+  /** Creates the stable user-facing error used to reject silent excerpts. */
   constructor() {
     super('Couldn’t read the sound in this clip.');
   }
 }
 
 /**
- * Saves `start`–`end` (seconds into the clip's video) of a clip's sound as an audio file named `name`:
- * AAC in an .m4a where the phone can encode it, otherwise WAV.
+ * Encodes the source interval `[start, end]` as a downloadable audio file.
+ *
+ * The function builds a one-track project so all mixing goes through the same
+ * source-time, speed, and channel behavior as normal preview/export. It first
+ * probes AAC and retains original 44.1 kHz/mono metadata when possible; a
+ * non-cancellation AAC failure falls back to 16-bit PCM WAV. Progress covers
+ * mixing/encoding, and an abort or silent input rejects without producing a file.
  */
 export async function encodeSoundbite(asset: MediaAsset, start: number, end: number, opts: Progress & { name: string }): Promise<File> {
   const duration = end - start;
@@ -91,7 +123,14 @@ export async function encodeSoundbite(asset: MediaAsset, start: number, end: num
   return new File([encodeWav(pcm, sampleRate)], `${opts.name}.wav`, { type: 'audio/wav' });
 }
 
-/** Mixes the soundbite a second at a time, handing each chunk (null where silent) to `take`. */
+/**
+ * Runs the one-track mix in one-second windows and forwards each PCM block to
+ * `take`, using the destination offset `off` and sample count `n`.
+ *
+ * This bounds peak memory and gives `AudioBufferSource` time to flush chunks.
+ * The mixer is always disposed, cancellation is checked between windows, and at
+ * least one non-null mix chunk is required. `take` may be asynchronous.
+ */
 async function mixBite(
   p: Project,
   frames: number,
@@ -118,7 +157,13 @@ async function mixBite(
   }
 }
 
-/** Keeps the clip's own sample rate and channel count where AAC allows, so the sound isn't resampled. */
+/**
+ * Reads the primary track's format when the asset is WebCodecs-readable.
+ *
+ * Only the AAC-friendly 44.1 kHz and mono variants are retained; otherwise the
+ * safe 48 kHz stereo defaults are returned. Probe failures are non-fatal, and
+ * the temporary Mediabunny input is always disposed.
+ */
 async function sourceFormat(asset: MediaAsset): Promise<{ sampleRate: number; numberOfChannels: number }> {
   const out = { sampleRate: 48_000, numberOfChannels: 2 };
   // Clips WebCodecs can't read are decoded at 48 kHz instead (decodeWholeAudio).
@@ -139,6 +184,11 @@ async function sourceFormat(asset: MediaAsset): Promise<{ sampleRate: number; nu
   return out;
 }
 
+/**
+ * Streams the mixed excerpt into an in-memory AAC/MP4 output and returns its
+ * bytes. The output is finalized before its buffer is read; an incomplete encode
+ * is cancelled in `finally` to release encoder resources.
+ */
 async function encodeM4a(p: Project, frames: number, fmt: AacFormat, opts: Progress): Promise<ArrayBuffer> {
   const { sampleRate: rate, numberOfChannels: ch } = fmt;
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });

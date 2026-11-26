@@ -64,6 +64,7 @@ import { pickColor, stillTime, useSourceStill } from './CropSheet';
 
 type Media = VideoItem | ImageItem;
 
+/** Reads the current editor state/actions for sheet handlers outside React selectors. */
 const ed = () => useEditor.getState();
 
 /** The item as it is in the store right now. */
@@ -72,13 +73,18 @@ function liveItem<T extends Item>(id: string): T | null {
   return p ? ((findItem(p, id)?.item as T | undefined) ?? null) : null;
 }
 
+/** Subscribes to whether `id` currently belongs to the main-track sequence. */
 function useIsMain(id: string): boolean {
   return useEditor((s) => !!s.project?.main.some((m) => m.id === id));
 }
 
+/** Formats normalized fractions as whole-percentage slider labels. */
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+/** Formats duration controls with one decimal place and seconds suffix. */
 const secs = (v: number) => `${v.toFixed(1)}s`;
+/** Converts a zero value to Off while delegating nonzero formatting to a formatter. */
 const off = (f: (v: number) => string) => (v: number) => (v <= 0 ? 'Off' : f(v));
+/** Formats count-sensitive status copy for apply-to-all feedback. */
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** Runs fn on every main-track clip in one undoable edit; fn returns whether it changed the clip. */
@@ -92,6 +98,7 @@ function forMain(fn: (m: MainItem, index: number) => boolean): number {
   return n;
 }
 
+/** Reports apply-to-all success or that all destination clips already match. */
 function appliedToast(n: number, what: string, noun = 'clip') {
   if (n) toast(`${what} applied to ${plural(n, `other ${noun}`)}`, 'success');
   else toast(`Every ${noun} already matches`);
@@ -115,6 +122,7 @@ function previewRange(from: number, to: number, rest = to) {
   eng.play();
   if (!eng.playing) return;
   let unsub: (() => void) | null = null;
+  /** Detaches the preview observer and clears the currently active one-shot range. */
   const stop = () => {
     unsub?.();
     unsub = null;
@@ -150,6 +158,7 @@ function useRevealPressed() {
   return ref;
 }
 
+/** Accessible horizontally scrollable option tiles with one controlled pressed value. */
 function OptionTiles<T extends string>({
   label,
   options,
@@ -174,6 +183,7 @@ function OptionTiles<T extends string>({
   );
 }
 
+/** Adds a visual dot and screen-reader status where an option has diverged from default. */
 function Changed({ on, text = 'changed' }: { on: boolean; text?: string }) {
   if (!on) return null;
   return (
@@ -188,12 +198,15 @@ function Changed({ on, text = 'changed' }: { on: boolean; text?: string }) {
 // Speed
 
 const SPEED_CHIPS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
+/** Short user label for logarithmic speed slider/chip values. */
 const fmtSpeed = (v: number) => `${Number(v.toFixed(2))}×`;
 
+/** Edits timed-media rate while recomputing ripple length and free-lane occupancy. */
 export function SpeedSheet({ item, onClose }: { item: VideoItem | AudioItem; onClose: () => void }) {
   const id = item.id;
   const sound = item.type === 'audio' || getAsset(item.mediaId)?.hasAudio !== false;
 
+  /** Restores gesture-start timing on every sample, then reapplies the new source rate. */
   const set = (v: number) => {
     const s = ed();
     const cur = liveItem<VideoItem | AudioItem>(id);
@@ -255,6 +268,7 @@ export function SpeedSheet({ item, onClose }: { item: VideoItem | AudioItem; onC
 // ---------------------------------------------------------------------------
 // Volume
 
+/** Controls mute, level, fades, and optional main-video apply-to-all behavior. */
 export function VolumeSheet({ item, onClose }: { item: VideoItem | AudioItem; onClose: () => void }) {
   const id = item.id;
   const isMain = useIsMain(id);
@@ -267,12 +281,14 @@ export function VolumeSheet({ item, onClose }: { item: VideoItem | AudioItem; on
     );
   }
 
+  /** Writes a merged audio-property patch through item history. */
   const set = (patch: Partial<AudioProps>) =>
     updateItem<VideoItem | AudioItem>(id, (it) => {
       Object.assign(it, patch);
     });
   const maxFade = Math.max(0.1, Math.min(5, item.duration / 2));
 
+  /** Copies this video's volume/mute state to all other main video clips. */
   const applyAll = () => {
     const { volume, muted } = item;
     const n = forMain((m) => {
@@ -347,8 +363,13 @@ const ANIMS: TileOption<AnimType>[] = [
   { id: 'typewriter', name: 'Typewriter', Icon: Keyboard },
 ];
 
+/** Caps animation duration between a usable minimum and the item's available lifetime. */
 const animMax = (it: { duration: number }) => Math.max(0.2, Math.min(3, it.duration));
 
+/**
+ * Edits entrance/exit animation for one visual item or every generated caption,
+ * retaining remembered side/all-caption choices across sheet openings.
+ */
 export function AnimationSheet({ item, onClose }: { item: VisualItem; onClose: () => void }) {
   const id = item.id;
   const caption = item.type === 'text' && !!item.caption;
@@ -360,21 +381,25 @@ export function AnimationSheet({ item, onClose }: { item: VisualItem; onClose: (
   const max = animMax(item);
   const options = item.type === 'text' ? ANIMS : ANIMS.filter((a) => a.id !== 'typewriter');
 
+  /** Remembers whether the user is editing entrance or exit animation. */
   const setSide = (s: 'in' | 'out') => {
     animSide = s;
     setSideState(s);
   };
+  /** Remembers caption-wide versus single-caption targeting. */
   const setAll = (v: boolean) => {
     animAllCaptions = v;
     setAllState(v);
   };
 
+  /** Resolves the current all-caption/single-item target set from a draft project. */
   const targets = (p: Project): VisualItem[] => {
     if (every) return p.texts.filter((t) => t.caption);
     const f = findItem(p, id);
     return f && f.item.type !== 'audio' ? [f.item] : [];
   };
 
+  /** Plays only the selected entrance/exit interval and parks at an appropriate edge. */
   const preview = () => {
     const it = liveItem<VisualItem>(id);
     if (!it) return;
@@ -388,6 +413,7 @@ export function AnimationSheet({ item, onClose }: { item: VisualItem; onClose: (
     }
   };
 
+  /** Chooses an animation and derives a legal initial duration for every target. */
   const pick = (type: AnimType) => {
     ed().apply((d) => {
       for (const t of targets(d as Project)) {
@@ -404,6 +430,7 @@ export function AnimationSheet({ item, onClose }: { item: VisualItem; onClose: (
     if (type !== 'none') preview();
   };
 
+  /** Applies a clamped duration to active animations on all current targets. */
   const setDur = (v: number) =>
     ed().apply((d) => {
       for (const t of targets(d as Project)) {
@@ -577,18 +604,21 @@ function useFilterPreviews(item: Media): Record<string, string> | null {
   return previews;
 }
 
+/** Selects and previews a clip filter, adjusts strength, and can copy it to main media. */
 export function FiltersSheet({ item, onClose }: { item: Media; onClose: () => void }) {
   const id = item.id;
   const isMain = useIsMain(id);
   const previews = useFilterPreviews(item);
   const tilesRef = useRevealPressed();
 
+  /** Stores the filter selection and makes a previously zero strength visible. */
   const pick = (filter: string) =>
     updateItem<Media>(id, (it) => {
       it.filter = filter;
       if (filter !== 'none' && it.filterAmount < 0.05) it.filterAmount = 1;
     });
 
+  /** Copies filter and strength to every other main photo/video. */
   const applyAll = () => {
     const { filter, filterAmount } = item;
     const n = forMain((m) => {
@@ -639,8 +669,10 @@ export function FiltersSheet({ item, onClose }: { item: Media; onClose: () => vo
 
 let adjustKey: keyof Adjust = 'brightness';
 
+/** Whether any defined color/contrast adjustment has departed from neutral. */
 const isAdjusted = (a: Adjust) => ADJUST_DEFS.some((d) => Math.abs(a[d.key]) > 1e-4);
 
+/** Exposes each adjustment as a focused slider with reset and main-track copy actions. */
 export function AdjustSheet({ item, onClose }: { item: Media; onClose: () => void }) {
   const id = item.id;
   const isMain = useIsMain(id);
@@ -649,11 +681,13 @@ export function AdjustSheet({ item, onClose }: { item: Media; onClose: () => voi
   const def = ADJUST_DEFS.find((d) => d.key === k) ?? ADJUST_DEFS[0];
   const bipolar = def.min < 0;
 
+  /** Remembers the adjustment category selected across sheet openings. */
   const setK = (key: keyof Adjust) => {
     adjustKey = key;
     setKState(key);
   };
 
+  /** Updates only the active adjustment while retaining other adjustment fields. */
   const set = (v: number) =>
     updateItem<Media>(id, (it) => {
       if (it.adjust[def.key] === v) return;
@@ -662,11 +696,13 @@ export function AdjustSheet({ item, onClose }: { item: Media; onClose: () => voi
       it.adjust = a;
     });
 
+  /** Replaces all active adjustments with a fresh neutral definition. */
   const reset = () =>
     updateItem<Media>(id, (it) => {
       if (isAdjusted(it.adjust)) it.adjust = { ...DEFAULT_ADJUST };
     });
 
+  /** Copies the full adjustment object to every other main photo/video. */
   const applyAll = () => {
     const a = item.adjust;
     const n = forMain((m) => {
@@ -677,6 +713,7 @@ export function AdjustSheet({ item, onClose }: { item: Media; onClose: () => voi
     appliedToast(n, 'Adjustments');
   };
 
+  /** Formats adjustment values as signed hundredths for bipolar controls. */
   const fmt = (v: number) => {
     const n = Math.round(v * 100);
     return bipolar && n > 0 ? `+${n}` : String(n);
@@ -735,10 +772,12 @@ const MOTIONS: TileOption<Motion>[] = [
   { id: 'panDown', name: 'Pan down', Icon: ArrowDown },
 ];
 
+/** Applies slow pan/zoom presets to photos/video and previews a new non-static choice. */
 export function MotionSheet({ item, onClose }: { item: Media; onClose: () => void }) {
   const id = item.id;
   const isMain = useIsMain(id);
 
+  /** Stores a motion and previews its first four seconds when the clip remains live. */
   const pick = (motion: Motion) => {
     updateItem<Media>(id, (it) => {
       it.motion = motion;
@@ -747,6 +786,7 @@ export function MotionSheet({ item, onClose }: { item: Media; onClose: () => voi
     if (it && motion !== 'none') previewRange(it.start, Math.min(itemEnd(it), it.start + 4), it.start);
   };
 
+  /** Copies motion to other main photos, where slow framing is most commonly used. */
   const applyAll = () => {
     const { motion } = item;
     const n = forMain((m) => {
@@ -779,10 +819,12 @@ const MASKS: TileOption<MaskShape>[] = [
   { id: 'rounded', name: 'Rounded', Icon: SquareRoundCorner },
 ];
 
+/** Controls a visual layer's shape mask, corner radius, and feathered edge. */
 export function MaskSheet({ item, onClose }: { item: VisualItem; onClose: () => void }) {
   const id = item.id;
   const mask = item.mask;
 
+  /** Replaces the mask only when the merged shape/radius/feather actually changes. */
   const set = (patch: Partial<Visual['mask']>) =>
     updateItem<VisualItem>(id, (it) => {
       const next = { ...it.mask, ...patch };
@@ -836,6 +878,10 @@ const BLEND_HINTS: Record<BlendMode, string> = {
   add: 'Brightens what’s underneath. Great for glows and sparkles.',
 };
 
+/**
+ * Edits opacity at the playhead (including keyframes) and blend mode for non-main
+ * visuals; main visuals expose opacity alone because they define the base scene.
+ */
 export function OpacitySheet({ item, onClose }: { item: VisualItem; onClose: () => void }) {
   const id = item.id;
   const isMain = useIsMain(id);
@@ -845,6 +891,7 @@ export function OpacitySheet({ item, onClose }: { item: VisualItem; onClose: () 
   const fps = useEditor((s) => s.project?.fps ?? 30);
   const value = currentPose(item, clamp(time - item.start, 0, item.duration)).opacity;
 
+  /** Derives every drag step from gesture-start pose data to prevent animation drift. */
   const set = (v: number) => {
     const s = ed();
     // Each drag step is computed from the clip as it was when the drag began.
@@ -883,6 +930,10 @@ export function OpacitySheet({ item, onClose }: { item: VisualItem; onClose: () 
 // ---------------------------------------------------------------------------
 // Background removal (color key or automatic subject cutout)
 
+/**
+ * Configures color-key or automatic subject removal and optionally samples a source
+ * pixel for the key color from an accessible still-image picker.
+ */
 export function ChromaSheet({ item, onClose }: { item: Media; onClose: () => void }) {
   const id = item.id;
   const isMain = useIsMain(id);
@@ -890,6 +941,7 @@ export function ChromaSheet({ item, onClose }: { item: Media; onClose: () => voi
   const [picking, setPicking] = useState(false);
   const still = useSourceStill(item, picking);
 
+  /** Merges removal settings into the selected item while preserving history semantics. */
   const set = (patch: Partial<BackgroundRemoval>, merge?: string) =>
     updateItem<Media>(
       id,
@@ -899,6 +951,10 @@ export function ChromaSheet({ item, onClose }: { item: Media; onClose: () => voi
       merge,
     );
 
+  /**
+   * Samples an averaged 5×5 pixel patch at a pointer location; a keyboard click uses
+   * a known backdrop corner so the same picker is available without coordinates.
+   */
   const onPick = (e: ReactMouseEvent<HTMLButtonElement>) => {
     const img = e.currentTarget.querySelector('img');
     if (!img?.complete || !img.naturalWidth) return;
@@ -949,6 +1005,7 @@ export function ChromaSheet({ item, onClose }: { item: Media; onClose: () => voi
 // ---------------------------------------------------------------------------
 // Solid color clips
 
+/** Changes a solid-color clip's fill through merged undo history. */
 export function ColorSheet({ item, onClose }: { item: ColorItem; onClose: () => void }) {
   const id = item.id;
   return (
@@ -993,6 +1050,7 @@ const TRANSITIONS: TileOption<TransitionType>[] = [
   { id: 'blur', name: 'Blur', Icon: Droplets },
 ];
 
+/** Edits the transition owned by a main clip between it and the preceding clip. */
 export function TransitionSheet({ item, onClose }: { item: MainItem; onClose: () => void }) {
   const id = item.id;
   const prevDur = useEditor((s) => {
@@ -1004,6 +1062,7 @@ export function TransitionSheet({ item, onClose }: { item: MainItem; onClose: ()
   const tr = item.transition ?? { type: 'none' as TransitionType, duration: 0.5 };
   const maxDur = Math.max(0.2, Math.min(2, prevDur / 2, item.duration / 2));
 
+  /** Plays a short window around the cut and rests at the transition midpoint. */
   const preview = () => {
     const p = ed().project;
     const i = p ? p.main.findIndex((m) => m.id === id) : -1;
@@ -1013,6 +1072,7 @@ export function TransitionSheet({ item, onClose }: { item: MainItem; onClose: ()
     previewRange(cur.start - 0.6, cur.start + overlap + 0.6, cur.start + overlap / 2);
   };
 
+  /** Adds/removes the transition and clamps an inherited duration to neighbor limits. */
   const pick = (type: TransitionType) => {
     updateItem<MainItem>(id, (it) => {
       if (type === 'none') {
@@ -1024,6 +1084,7 @@ export function TransitionSheet({ item, onClose }: { item: MainItem; onClose: ()
     if (type !== 'none') preview();
   };
 
+  /** Copies or removes the live transition at every eligible main cut. */
   const applyAll = () => {
     const t = liveItem<MainItem>(id)?.transition;
     const n = forMain((m, i) => {

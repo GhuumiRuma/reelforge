@@ -4,7 +4,12 @@ import { isNativeApp } from './util';
  * Phone-specific glue: on-screen keyboard tracking, iOS keyboard priming and file picking.
  */
 
-/** Keeps `--kb` (CSS px hidden behind the on-screen keyboard) up to date. */
+/**
+ * Keeps the root `--kb` CSS variable and `data-kb` marker synchronized with the visual viewport.
+ *
+ * The callback is DOM-only and listens for viewport resize/scroll plus focus-out; it performs no
+ * persistence. Unsupported visual-viewport environments are ignored.
+ */
 export function trackKeyboard() {
   const vv = window.visualViewport;
   if (!vv) return;
@@ -47,7 +52,13 @@ export function primeKeyboard() {
   primer.focus({ preventScroll: true });
 }
 
-/** Opens the system file picker. Must be called synchronously from a tap/click handler. */
+/**
+ * Opens the browser/OS file picker and resolves the selected files.
+ *
+ * The hidden input must be created and clicked synchronously during the triggering gesture for
+ * iOS/Android browser restrictions. It is removed after change/cancel; cancellation resolves to
+ * `[]` rather than rejecting.
+ */
 export function pickFiles(accept: string, multiple = true): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
@@ -69,7 +80,12 @@ export function pickFiles(accept: string, multiple = true): Promise<File[]> {
   });
 }
 
-/** Shares a file through the OS share sheet when possible; returns false if unsupported. */
+/**
+ * Shares a file through the Android/native or Web Share sheet when supported.
+ *
+ * It reports user cancellation separately from unsupported browsers. Native or web-share failures
+ * other than cancellation reject to the caller; no file content is sent to a ReelForge service.
+ */
 export async function shareFile(file: File, title: string): Promise<'shared' | 'cancelled' | 'unsupported'> {
   if (isNativeApp()) return (await import('./native')).nativeShare(file, title);
   const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
@@ -83,11 +99,16 @@ export async function shareFile(file: File, title: string): Promise<'shared' | '
   }
 }
 
+/** Reports whether the current browser exposes the WebCodecs video encoder API. */
 export const canEncodeVideo = () => typeof VideoEncoder !== 'undefined';
 
+/** Subset of navigator used without assuming the wake-lock API exists. */
 type WakeLockNav = Navigator & { wakeLock?: { request(type: 'screen'): Promise<{ release(): Promise<void> }> } };
 
-/** Keeps the screen on during long jobs (export, captions); null where unsupported or refused. */
+/**
+ * Requests a screen wake lock for a long local job such as export/captions.
+ * Unsupported or denied APIs resolve to `null`; the caller is responsible for releasing a lock.
+ */
 export async function acquireWakeLock(): Promise<{ release(): Promise<void> } | null> {
   try {
     return (await (navigator as WakeLockNav).wakeLock?.request('screen')) ?? null;

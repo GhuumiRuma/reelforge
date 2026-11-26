@@ -1,3 +1,8 @@
+/**
+ * Audio insertion and voiceover sheet. Tabs remember the last choice, async imports
+ * preview only while alive, and recording owns microphone/audio-session cleanup so
+ * preview playback, browser permissions, and project state remain consistent.
+ */
 import { Circle, LoaderCircle, Mic, Music, Plus, Square } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { ClipMeta, VideoItem } from '../../types';
@@ -24,6 +29,7 @@ const TABS: { value: Tab; label: string }[] = [
 ];
 
 type AudioSessionNav = Navigator & { audioSession?: { type: string } };
+/** Best-effort iOS audio-session mode update for playback/recording transitions. */
 function setSessionType(type: string) {
   try {
     const nav = navigator as AudioSessionNav;
@@ -33,6 +39,10 @@ function setSessionType(type: string) {
   }
 }
 
+/**
+ * Gives async import/library callbacks a stable mutable mount guard without forcing
+ * state reads from stale effect closures.
+ */
 function useAlive() {
   const alive = useRef(false);
   useEffect(() => {
@@ -44,10 +54,12 @@ function useAlive() {
   return alive;
 }
 
+/** Hosts the remembered music/SFX/record tab and blocks tab/close changes while busy. */
 export function AudioSheet({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<Tab>(lastTab);
   const [busy, setBusy] = useState<string | null>(null);
 
+  /** Changes/records a tab unless active work has reserved the sheet. */
   const change = (t: Tab) => {
     if (busy) return toast(busy);
     lastTab = t;
@@ -66,6 +78,7 @@ export function AudioSheet({ onClose }: { onClose: () => void }) {
 
 // ---------------------------------------------------------------------------
 
+/** Adds/imports music, previews saved audio, and exposes original-video muting. */
 function MusicPane({ onClose }: { onClose: () => void }) {
   const alive = useAlive();
   const original = useEditor((s) => {
@@ -74,6 +87,7 @@ function MusicPane({ onClose }: { onClose: () => void }) {
     return vids.some((v) => !v.muted) ? 1 : 0;
   });
 
+  /** Imports one audio/video source in the tap and adds its sound at the playhead. */
   const choose = () => {
     // The picker must open inside the tap.
     void pickFiles('audio/*,video/*', false).then(async (files) => {
@@ -97,6 +111,7 @@ function MusicPane({ onClose }: { onClose: () => void }) {
     });
   };
 
+  /** Toggles the mute flag on every main video in one undoable project edit. */
   const setOriginal = (on: boolean) =>
     useEditor.getState().apply((d) => {
       for (const m of d.main) if (m.type === 'video') m.muted = !on;
@@ -121,6 +136,7 @@ function MusicPane({ onClose }: { onClose: () => void }) {
 }
 
 /** Audio clips saved in the clip library: tap a name to hear it, + to add it at the playhead. */
+/** Loads reusable audio clips for isolated preview and serialized insertion. */
 function MyClips({ onClose }: { onClose: () => void }) {
   const alive = useAlive();
   const adding = useRef(false);
@@ -136,6 +152,7 @@ function MyClips({ onClose }: { onClose: () => void }) {
 
   useEffect(() => () => getEngine()?.audio.stopPreview(), []);
 
+  /** Streams a stored clip into the preview engine's isolated audio-preview path. */
   const play = (id: string) =>
     void getEngine()
       ?.audio.preview(
@@ -146,6 +163,7 @@ function MyClips({ onClose }: { onClose: () => void }) {
       )
       .catch(() => toast('Couldn’t play that clip', 'error'));
 
+  /** Stops preview and imports one library clip, guarding against double activation. */
   const add = async (clip: ClipMeta) => {
     if (adding.current) return;
     adding.current = true;
@@ -183,10 +201,12 @@ function MyClips({ onClose }: { onClose: () => void }) {
 
 // ---------------------------------------------------------------------------
 
+/** Offers built-in synthesized SFX for one-at-a-time preview or insertion. */
 function SfxPane({ onClose }: { onClose: () => void }) {
   const alive = useAlive();
   const adding = useRef(false);
 
+  /** Imports a rendered effect and inserts it at the captured playhead if still open. */
   const add = (id: string, name: string) => {
     if (adding.current) return;
     adding.current = true;
@@ -233,6 +253,7 @@ function SfxPane({ onClose }: { onClose: () => void }) {
 
 type Phase = 'idle' | 'enabling' | 'ready' | 'recording' | 'saving';
 
+/** Selects the first platform-appropriate MediaRecorder container/codec. */
 function pickMime(): string {
   const list = isIOS
     ? ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm']
@@ -255,6 +276,11 @@ interface RecState {
   unsub: (() => void) | null;
 }
 
+/**
+ * Two-tap voiceover recorder. Microphone permission/context setup happens first;
+ * recording then drives playback from the playhead, and stop encodes a mono WAV
+ * before importing it as a voice audio item at the captured start time.
+ */
 function RecordPane({ onBusy }: { onBusy: (msg: string | null) => void }) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -305,6 +331,10 @@ function RecordPane({ onBusy }: { onBusy: (msg: string | null) => void }) {
     };
   }, [onBusy]);
 
+  /**
+   * Requests microphone access from the tap and creates/resumes the meter context
+   * in the same gesture so iOS permits the audio graph and recording later.
+   */
   const enable = () => {
     setError(null);
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
@@ -353,6 +383,7 @@ function RecordPane({ onBusy }: { onBusy: (msg: string | null) => void }) {
       );
   };
 
+  /** Builds a silent analyzer graph and imperatively updates the meter each frame. */
   const startMeter = (ctx: AudioContext, stream: MediaStream) => {
     const s = r.current;
     const an = ctx.createAnalyser();
@@ -362,6 +393,7 @@ function RecordPane({ onBusy }: { onBusy: (msg: string | null) => void }) {
     // Routed to a silent output so every browser keeps the analyzer running.
     ctx.createMediaStreamSource(stream).connect(an).connect(mute).connect(ctx.destination);
     const buf = new Uint8Array(an.fftSize);
+    /** Samples RMS-like microphone activity and smooths it into the visual meter. */
     const tick = () => {
       an.getByteTimeDomainData(buf);
       let sum = 0;
@@ -377,6 +409,10 @@ function RecordPane({ onBusy }: { onBusy: (msg: string | null) => void }) {
     s.raf = requestAnimationFrame(tick);
   };
 
+  /**
+   * Starts MediaRecorder at the current playhead, optionally starts/mutes preview
+   * playback, and stops automatically when the project playback pauses or ends.
+   */
   const record = () => {
     const s = r.current;
     if (!s.stream) return;
@@ -425,6 +461,7 @@ function RecordPane({ onBusy }: { onBusy: (msg: string | null) => void }) {
     haptic('medium');
   };
 
+  /** Detaches playback monitoring and commits the recorder to asynchronous saving. */
   const stop = () => {
     const s = r.current;
     if (!s.rec || s.rec.state === 'inactive') return;
@@ -437,12 +474,17 @@ function RecordPane({ onBusy }: { onBusy: (msg: string | null) => void }) {
     s.rec.stop();
   };
 
+  /**
+   * Decodes recorded chunks, downmixes to mono, writes a WAV, imports it through the
+   * normal media path, and inserts a voice track with failure feedback.
+   */
   const save = async (mime: string) => {
     const s = r.current;
     const chunks = s.chunks;
     s.chunks = [];
     s.rec = null;
     if (s.discard) return;
+    /** Reports recording-save failure or restores the ready/idle control phase. */
     const done = (msg?: string) => {
       if (msg) toast(msg, 'error');
       if (s.alive) setPhase(s.stream ? 'ready' : 'idle');
@@ -475,6 +517,7 @@ function RecordPane({ onBusy }: { onBusy: (msg: string | null) => void }) {
     }
   };
 
+  /** Changes whether currently recording preview audio is heard through the engine. */
   const toggleHear = (v: boolean) => {
     setHear(v);
     if (phase === 'recording') getEngine()?.audio.setMuted(!v);

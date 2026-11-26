@@ -1,3 +1,8 @@
+/**
+ * Promise-based modal commands. A single Zustand request is rendered by DialogHost,
+ * allowing any synchronous action handler to await confirm/prompt/menu decisions
+ * without creating local React dialog state.
+ */
 import { Check } from 'lucide-react';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
@@ -22,22 +27,26 @@ type Req =
 
 const useDialog = create<{ req: Req | null; seq: number }>(() => ({ req: null, seq: 0 }));
 
+/** Replaces an open request, resolving the previous promise as cancelled. */
 function show(req: Req) {
   const prev = useDialog.getState().req;
   if (prev) cancel(prev);
   useDialog.setState((s) => ({ req, seq: s.seq + 1 }));
 }
 
+/** Resolves a request with the cancellation value appropriate to its discriminant. */
 function cancel(r: Req) {
   if (r.kind === 'confirm') r.resolve(false);
   else r.resolve(null);
 }
 
+/** Clears only the still-current request, then resolves the caller's promise. */
 function finish(r: Req, fn: () => void) {
   if (useDialog.getState().req === r) useDialog.setState({ req: null });
   fn();
 }
 
+/** Opens an alert-style confirmation and resolves `true` only for its affirmative action. */
 export function confirmDialog(o: { title: string; message?: string; confirm?: string; danger?: boolean }): Promise<boolean> {
   return new Promise((resolve) => show({ kind: 'confirm', confirm: 'OK', ...o, resolve }));
 }
@@ -48,10 +57,12 @@ export function promptDialog(o: { title: string; value?: string; placeholder?: s
   return new Promise((resolve) => show({ kind: 'prompt', value: '', confirm: 'Save', ...o, resolve }));
 }
 
+/** Opens an accessible action sheet and resolves the chosen item ID or `null`. */
 export function menuDialog(o: { title?: string; items: MenuItem[] }): Promise<string | null> {
   return new Promise((resolve) => show({ kind: 'menu', ...o, resolve }));
 }
 
+/** Mounts the current promise request, remounting each view by request sequence. */
 export function DialogHost() {
   const { req, seq } = useDialog();
   if (!req) return null;
@@ -60,9 +71,11 @@ export function DialogHost() {
   return <MenuView key={seq} r={req} />;
 }
 
+/** Focuses Cancel initially and routes back, scrim, and button dismissal safely. */
 function ConfirmView({ r }: { r: Extract<Req, { kind: 'confirm' }> }) {
   const id = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
+  /** Finishes this exact request with the chosen confirmation value. */
   const close = (v: boolean) => finish(r, () => r.resolve(v));
   useBack(true, () => close(false));
   useEffect(() => cancelRef.current?.focus({ preventScroll: true }), []);
@@ -84,10 +97,12 @@ function ConfirmView({ r }: { r: Extract<Req, { kind: 'confirm' }> }) {
   );
 }
 
+/** Selects the current prompt value on focus and submits only a non-blank string. */
 function PromptView({ r }: { r: Extract<Req, { kind: 'prompt' }> }) {
   const id = useId();
   const [v, setV] = useState(r.value);
   const input = useRef<HTMLInputElement>(null);
+  /** Resolves trimmed submission or cancellation while preserving request identity. */
   const close = (val: string | null) => finish(r, () => r.resolve(val));
   useBack(true, () => close(null));
   useEffect(() => {
@@ -134,8 +149,10 @@ function PromptView({ r }: { r: Extract<Req, { kind: 'prompt' }> }) {
   );
 }
 
+/** Renders checked menu choices in a modal sheet and primes keyboard-linked actions. */
 function MenuView({ r }: { r: Extract<Req, { kind: 'menu' }> }) {
   const id = useId();
+  /** Resolves an item ID (or cancellation) and removes this menu from the host. */
   const close = (val: string | null) => finish(r, () => r.resolve(val));
   useBack(true, () => close(null));
   return (

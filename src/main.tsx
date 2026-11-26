@@ -1,3 +1,12 @@
+/**
+ * Browser and Capacitor entry point.
+ *
+ * Global appearance and keyboard state are initialized before React mounts so
+ * pre-paint theming and virtual-keyboard sizing are available to every
+ * screen. The PWA update bridge is installed only in browser builds; Capacitor
+ * builds are replaced by installing a new APK, so caching another web bundle in
+ * the WebView would add an unrelated update path.
+ */
 import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 
@@ -51,6 +60,8 @@ trackKeyboard();
 const updateSW = isNativeApp()
   ? null
   : registerSW({
+      // Expose Workbox's refresh action through the Zustand app store so the
+      // Home screen can present an update without coupling this entry point to UI.
       onNeedRefresh() {
         useApp.setState({ needRefresh: true });
       },
@@ -64,4 +75,5 @@ const updateSW = isNativeApp()
     });
 if (updateSW) useApp.setState({ updateSW });
 
+// All routed screens and app-wide feedback surfaces share this single React root.
 createRoot(document.getElementById('root')!).render(<App />);

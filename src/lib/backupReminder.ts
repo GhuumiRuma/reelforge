@@ -10,11 +10,14 @@ import { BUILD_ID } from './build';
 import { listClipIds, listProjects } from './db';
 import { isNativeApp } from './util';
 
+/** Local-storage key that remembers the build seen during the previous native launch. */
 export const LAST_BUILD_KEY = 'rf-last-build';
+/** Local-storage key containing the timestamp of the last successful backup. */
 export const LAST_BACKUP_KEY = 'rf-last-backup';
 /** A backup this recent is good enough: no need to ask again after an update. */
 export const RECENT_BACKUP_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Pure inputs used to decide whether an app-update backup reminder is appropriate. */
 export interface ReminderInput {
   native: boolean;
   /** the build that last ran here, or null if none was noted (a first launch, or a build from before this existed) */
@@ -25,21 +28,40 @@ export interface ReminderInput {
   now: number;
 }
 
+/**
+ * Decides whether an update should offer a backup without performing storage I/O.
+ *
+ * Browser launches and native installs without user data do not qualify, and a backup from the
+ * recent window suppresses the prompt. A missing previous build is treated as an older install.
+ */
 export function shouldRemind(i: ReminderInput): boolean {
   // A phone with nothing on it has nothing to lose; without a noted build, data means an older version ran here.
   if (!i.native || !i.hasData || i.previousBuild === i.currentBuild) return false;
   return i.lastBackupAt === null || i.now - i.lastBackupAt > RECENT_BACKUP_MS;
 }
 
+/** Injectable storage and database environment that makes reminder behavior deterministic in tests. */
 export interface ReminderEnv {
+  /** Whether this launch can use native-app update behavior. */
   native: boolean;
+  /** Build identifier that is written as the newly observed launch. */
   build: string;
+  /** Injected clock value used for recent-backup and persistence timestamps. */
   now: number;
+  /** Reads a preference key, returning `null` when absent or inaccessible. */
   read(key: string): string | null;
+  /** Best-effort write of an update-reminder preference. */
   write(key: string, value: string): void;
+  /** Resolves true when the local database/library contains anything worth backing up. */
   hasData(): Promise<boolean>;
 }
 
+/**
+ * Builds the production reminder environment.
+ *
+ * Local-storage failures become missing values, so blocked preference storage cannot prevent the
+ * app from opening. Data presence comes from IndexedDB and counts either projects or saved clips.
+ */
 const liveEnv = (): ReminderEnv => ({
   native: isNativeApp(),
   build: BUILD_ID,
@@ -67,6 +89,7 @@ export function readLastBackup(env: Pick<ReminderEnv, 'read'> = liveEnv()): numb
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/** Records the current time as the most recent successful backup, on a best-effort basis. */
 export function markBackedUp(env: Pick<ReminderEnv, 'write' | 'now'> = liveEnv()): void {
   env.write(LAST_BACKUP_KEY, String(env.now));
 }

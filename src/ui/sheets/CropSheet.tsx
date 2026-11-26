@@ -1,3 +1,8 @@
+/**
+ * Crop geometry and source-still helpers. Crop values remain fractional cuts from
+ * each source edge; pointer work is mirrored for flipped media and converted to a
+ * single gesture history entry, while the preview uses a full-resolution still.
+ */
 import { LoaderCircle, RotateCcw } from 'lucide-react';
 import {
   useEffect,
@@ -34,6 +39,7 @@ export function stillTime(item: Media): number {
   return clamp(st, item.in, Math.max(item.in, srcEnd - 0.05));
 }
 
+/** Resolves only after a still has loaded so its natural pixel dimensions are known. */
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -113,6 +119,7 @@ export function pickColor(img: HTMLImageElement, fx: number, fy: number): string
     b += d[i + 2];
   }
   const n = d.length / 4;
+  /** Converts an averaged 0..255 channel to a two-digit lowercase hex component. */
   const hex = (v: number) => Math.round(v / n).toString(16).padStart(2, '0');
   return `#${hex(r)}${hex(g)}${hex(b)}`;
 }
@@ -127,6 +134,10 @@ const MIN = 0.05;
 const INSET = 24;
 
 /** The crop as seen on screen when the clip is flipped. Mirroring is its own inverse, so this converts both ways. */
+/**
+ * Converts crop coordinates between source space and the display after flips.
+ * Mirroring is self-inverse, so the same helper is used for reads and writes.
+ */
 function mirror(c: Crop, flipH: boolean, flipV: boolean): Crop {
   return {
     l: flipH ? c.r : c.l,
@@ -136,10 +147,14 @@ function mirror(c: Crop, flipH: boolean, flipV: boolean): Crop {
   };
 }
 
+/** Quantizes normalized crop values to avoid noisy pointer-derived precision. */
 const q = (v: number) => Math.round(clamp(v, 0, 1) * 10000) / 10000;
+/** Normalizes all four crop sides before they are written to an item. */
 const tidy = (c: Crop): Crop => ({ l: q(c.l), t: q(c.t), r: q(c.r), b: q(c.b) });
+/** Exact equality helper that prevents no-op crop history entries. */
 const sameCrop = (a: Crop, b: Crop) => a.l === b.l && a.t === b.t && a.r === b.r && a.b === b.b;
 
+/** Translates a fixed-size crop inside the source while preserving its width/height. */
 function moveBy(c: Crop, dx: number, dy: number): Crop {
   const sx = c.l + c.r;
   const sy = c.t + c.b;
@@ -199,6 +214,10 @@ const RATIOS: { id: string; label: string; value: (W: number, H: number) => numb
   ...ASPECTS.map((a) => ({ id: a.id, label: a.id, value: () => a.w / a.h })),
 ];
 
+/**
+ * Responsive crop sheet with pointer handles and keyboard nudging. Reads use
+ * display-space mirrored values; writes return to source space for the renderer.
+ */
 export function CropSheet({ item, onClose }: { item: Media; onClose: () => void }) {
   const id = item.id;
   const still = useSourceStill(item);
@@ -215,6 +234,7 @@ export function CropSheet({ item, onClose }: { item: Media; onClose: () => void 
   useLayoutEffect(() => {
     const el = stageRef.current;
     if (!el) return;
+    /** Fits the source still inside the stage while reserving space for crop handles. */
     const measure = () => {
       const r = el.getBoundingClientRect();
       setStage((s) => (s.w === r.width && s.h === r.height ? s : { w: r.width, h: r.height }));
@@ -233,6 +253,7 @@ export function CropSheet({ item, onClose }: { item: Media; onClose: () => void 
   const outW = Math.round((asset?.width || W) * (1 - c.l - c.r));
   const outH = Math.round((asset?.height || H) * (1 - c.t - c.b));
 
+  /** Mirrors a display crop back to source coordinates and writes it undoably. */
   const write = (next: Crop, merge?: string) =>
     updateItem<Media>(
       id,
@@ -243,6 +264,7 @@ export function CropSheet({ item, onClose }: { item: Media; onClose: () => void 
       merge,
     );
 
+  /** Captures a crop move/resize pointer and begins one continuous history gesture. */
   const down = (mode: Corner | 'move') => (e: ReactPointerEvent<HTMLElement>) => {
     if (e.button > 0 || drag.current || !dw) return;
     e.stopPropagation();
@@ -256,6 +278,7 @@ export function CropSheet({ item, onClose }: { item: Media; onClose: () => void 
     setDragging(true);
   };
 
+  /** Converts CSS delta to fractional source movement and updates the captured shape. */
   const move = (e: ReactPointerEvent) => {
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
@@ -264,6 +287,7 @@ export function CropSheet({ item, onClose }: { item: Media; onClose: () => void 
     write(d.mode === 'move' ? moveBy(d.c0, dx, dy) : resize(d.c0, d.mode, dx, dy, ratio, W, H));
   };
 
+  /** Ends only the owning pointer's gesture and commits its single undo step. */
   const up = (e: ReactPointerEvent) => {
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
@@ -272,6 +296,7 @@ export function CropSheet({ item, onClose }: { item: Media; onClose: () => void 
     useEditor.getState().endGesture();
   };
 
+  /** Exposes crop-box movement through arrow keys and merged keyboard history. */
   const onKey = (e: ReactKeyboardEvent) => {
     const step = e.shiftKey ? 0.1 : 0.01;
     const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
@@ -282,12 +307,14 @@ export function CropSheet({ item, onClose }: { item: Media; onClose: () => void 
     write(moveBy(c, dx, dy), `crop:${id}`);
   };
 
+  /** Fits a chosen output aspect around the current crop center when constrained. */
   const pickRatio = (rid: string) => {
     setRatioId(rid);
     const r = (RATIOS.find((x) => x.id === rid) ?? RATIOS[0]).value(W, H);
     if (r) write(fitRatio(c, r, W, H));
   };
 
+  /** Removes all source-edge cuts and restores unconstrained geometry. */
   const reset = () => {
     setRatioId('free');
     write({ l: 0, t: 0, r: 0, b: 0 });

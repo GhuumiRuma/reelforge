@@ -1,3 +1,8 @@
+/**
+ * Creates standalone clips with Mediabunny and generates media-library posters.
+ * Re-encoding is reserved for operations that require exact trimming/cropping;
+ * downloaded picture and sound streams are otherwise packet-muxed without loss.
+ */
 import {
   ALL_FORMATS,
   BlobSource,
@@ -22,6 +27,7 @@ import { canEncodeAac } from './audio';
 /** Chrome only shares .m4a files with this type. */
 const M4A_TYPE = 'audio/x-m4a';
 
+/** User-selected cut parameters and optional cancellation/progress delivery. */
 export interface ClipJob {
   kind: 'video' | 'audio';
   start: number;
@@ -34,6 +40,7 @@ export interface ClipJob {
   onProgress?: (fraction: number) => void;
 }
 
+/** Output metadata accompanies the File so callers can update the library without probing it again. */
 export interface ClipResult {
   file: File;
   width: number;
@@ -41,9 +48,17 @@ export interface ClipResult {
   duration: number;
 }
 
+/** A user-correctable clipping failure, distinct from unexpected browser/library errors. */
 export class ClipError extends Error {}
 
-/** Cuts `start`–`end` out of `source`, cropped, as an MP4 video or an .m4a (or .wav) audio file. */
+/**
+ * Cuts the requested source-time interval into a video or audio file.
+ *
+ * The Mediabunny input is shared by the selected encoder and disposed on every
+ * path. Video jobs require a picture track; audio jobs require sound. Track
+ * support and codec failures become `ClipError`s, while cancellation propagates
+ * as `AbortError`.
+ */
 export async function encodeClip(source: Blob, job: ClipJob): Promise<ClipResult> {
   const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(source) });
   try {
@@ -58,6 +73,14 @@ export async function encodeClip(source: Blob, job: ClipJob): Promise<ClipResult
   }
 }
 
+/**
+ * Transcodes a primary video track at the clipped frame interval and optional
+ * pixel crop. A primary audio track is included when AAC or Opus is available;
+ * otherwise the result is intentionally silent rather than failing the video.
+ *
+ * The bitrate is bounded by device-friendly and maximum output limits. The
+ * returned dimensions describe the cropped picture, not the source container.
+ */
 async function encodeVideo(input: Input, track: InputVideoTrack, job: ClipJob): Promise<ClipResult> {
   const srcW = track.displayWidth;
   const srcH = track.displayHeight;
@@ -99,6 +122,12 @@ async function encodeVideo(input: Input, track: InputVideoTrack, job: ClipJob): 
   };
 }
 
+/**
+ * Converts the primary audio track to AAC/M4A when supported, otherwise PCM
+ * WAV. Format selection limits channels to stereo and sample rate to 44.1 or
+ * 48 kHz, avoiding unsupported codec configurations while preserving common
+ * source formats.
+ */
 async function encodeAudio(input: Input, track: InputAudioTrack, job: ClipJob): Promise<ClipResult> {
   const numberOfChannels = Math.min(2, track.numberOfChannels || 2);
   const sampleRate = track.sampleRate === 44_100 ? 44_100 : 48_000;
@@ -125,6 +154,13 @@ async function encodeAudio(input: Input, track: InputAudioTrack, job: ClipJob): 
   return { file, width: 0, height: 0, duration: job.end - job.start };
 }
 
+/**
+ * Executes one already-configured Mediabunny conversion.
+ *
+ * Progress is normalized from encoder media time into the requested clip
+ * duration. An abort cancels the conversion; the event listener is removed in
+ * all cases so a later abort cannot retain or affect a completed job.
+ */
 async function run(conversion: Conversion, job: ClipJob): Promise<void> {
   if (!conversion.isValid) throw new ClipError('This file can’t be converted on this device.');
   const length = Math.max(0.001, job.end - job.start);
@@ -141,8 +177,12 @@ async function run(conversion: Conversion, job: ClipJob): Promise<void> {
 }
 
 /**
- * Joins a picture-only file and a sound-only file (as YouTube serves higher qualities) into one MP4
- * without re-encoding.
+ * Packet-muxes a picture-only download with an optional sound-only download.
+ *
+ * Decoder configs and track rotation are copied to the MP4, while encoded
+ * packets pass through without decode/re-encode. Cancellation is checked for
+ * every packet. A partial output is cancelled and both demuxer inputs are
+ * disposed if any step fails.
  */
 export async function muxStreams(videoBlob: Blob, audioBlob: Blob | null, signal?: AbortSignal): Promise<Blob> {
   const vIn = new Input({ formats: ALL_FORMATS, source: new BlobSource(videoBlob) });
@@ -191,7 +231,13 @@ export async function muxStreams(videoBlob: Blob, audioBlob: Blob | null, signal
   }
 }
 
-/** A small JPEG of the frame at `t` seconds, for the library. */
+/**
+ * Seeks a temporary video element to `t` and encodes a maximum-320-px JPEG
+ * thumbnail. The time is clamped away from the endpoint to avoid empty frames.
+ *
+ * Decode/seek/encode failures are reported as a warning and return `null`; the
+ * object URL and temporary element source are released regardless.
+ */
 export async function posterFrame(blob: Blob, t: number): Promise<Blob | null> {
   const url = URL.createObjectURL(blob);
   try {

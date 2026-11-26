@@ -1,3 +1,8 @@
+/**
+ * Shared editor controls and Zustand adapters. Pointer-oriented controls here manage
+ * gesture lifetimes explicitly so one drag becomes one undo entry, while their ARIA
+ * roles and keyboard paths provide the same operations without pointer events.
+ */
 import { Check, X } from 'lucide-react';
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -13,6 +18,7 @@ import { selectedItem, toast, useEditor } from '../state/store';
 // Store helpers
 
 /** The selected item with its track, or null. Stable between unrelated store updates. */
+/** Selects the current item plus stable track/index metadata for tool and sheet UIs. */
 export function useSelected() {
   return useEditor(
     useShallow((s) => {
@@ -23,6 +29,10 @@ export function useSelected() {
 }
 
 /** Mutates one item in an undoable edit. */
+/**
+ * Applies `fn` only when `id` still resolves, routing the mutation through editor
+ * normalization/history and persisting a later merge key for continuous typing/sliders.
+ */
 export function updateItem<T extends Item = Item>(id: string, fn: (it: Draft<T>, p: Draft<Project>) => void, merge?: string) {
   useEditor.getState().apply(
     (p) => {
@@ -34,6 +44,7 @@ export function updateItem<T extends Item = Item>(id: string, fn: (it: Draft<T>,
 }
 
 /** Slider callbacks that turn a whole drag into a single undo step. */
+/** Connects reusable sliders to the store's single-snapshot continuous-gesture history. */
 export const gesture = {
   onStart: () => useEditor.getState().beginGesture(),
   onEnd: () => useEditor.getState().endGesture(),
@@ -56,12 +67,17 @@ interface SheetProps {
   bodyClassName?: string;
 }
 
+/**
+ * Accessible sheet shell with focus, back-stack, scrim, and busy-close semantics.
+ * Compact sheets sit above editor tools; tall sheets become modal and use `aria-modal`.
+ */
 export function Sheet({ title, onClose, children, tall, busy, actions, closeIcon = 'check', bodyClassName }: SheetProps) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const state = useRef({ busy, onClose });
   state.current = { busy, onClose };
 
+  /** Rejects close/back actions while work is busy, otherwise delegates cleanup to the owner. */
   const tryClose = (): boolean => {
     const { busy: b, onClose: close } = state.current;
     if (b) {
@@ -130,6 +146,11 @@ interface SliderProps {
   hideLabel?: boolean;
 }
 
+/**
+ * Pointer- and keyboard-accessible linear/log slider. Mouse drags start immediately,
+ * touch waits for a horizontal intent to preserve vertical page scrolling, and each
+ * drag/tap emits a gesture pair so Undo sees one operation rather than every sample.
+ */
 export function Slider(props: SliderProps) {
   const { label, value, min, max, format, snaps, disabled, hideLabel } = props;
   const p = useRef(props);
@@ -137,11 +158,13 @@ export function Slider(props: SliderProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const drag = useRef<{ id: number; x0: number; y0: number; dragging: boolean; last: number; snap: number | null } | null>(null);
 
+  /** Converts a value to normalized track position, accounting for logarithmic scales. */
   const toPos = (v: number) => {
     const { min: a, max: b, scale } = p.current;
     if (scale === 'log') return Math.log(v / a) / Math.log(b / a);
     return (v - a) / (b - a);
   };
+  /** Converts a track position into a clamped, quantized, fixed-precision value. */
   const fromPos = (pos: number) => {
     const { min: a, max: b, scale, step } = p.current;
     pos = clamp(pos, 0, 1);
@@ -151,6 +174,7 @@ export function Slider(props: SliderProps) {
     return clamp(Number(v.toFixed(6)), a, b);
   };
 
+  /** Suppresses duplicate drag samples before notifying the owning edit handler. */
   const emit = (v: number) => {
     const d = drag.current;
     if (d && d.last === v) return;
@@ -158,6 +182,7 @@ export function Slider(props: SliderProps) {
     p.current.onChange(v);
   };
 
+  /** Maps a pointer's client coordinate to the closest value and applies nearby snaps. */
   const fromClient = (clientX: number) => {
     const r = trackRef.current!.getBoundingClientRect();
     const pos = (clientX - r.left) / Math.max(1, r.width);
@@ -178,12 +203,14 @@ export function Slider(props: SliderProps) {
     return v;
   };
 
+  /** Records a possible tap/drag; touch does not begin editing until direction is known. */
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (disabled || e.button > 0) return;
     drag.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dragging: false, last: NaN, snap: null };
     if (e.pointerType === 'mouse') begin(e);
   };
 
+  /** Claims the pointer and opens the undo gesture before emitting the first value. */
   const begin = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current!;
     d.dragging = true;
@@ -196,6 +223,7 @@ export function Slider(props: SliderProps) {
     emit(fromClient(e.clientX));
   };
 
+  /** Promotes a horizontal touch movement to a drag, then emits tracked movement. */
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
@@ -208,6 +236,7 @@ export function Slider(props: SliderProps) {
     emit(fromClient(e.clientX));
   };
 
+  /** Finishes a drag or treats a stationary touch as one complete tap gesture. */
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.id !== e.pointerId) return;
@@ -225,17 +254,20 @@ export function Slider(props: SliderProps) {
     drag.current = null;
   };
 
+  /** Commits any actual drag on cancellation so store history is never left open. */
   const onPointerCancel = () => {
     const d = drag.current;
     drag.current = null;
     if (d?.dragging) p.current.onEnd?.();
   };
 
+  /** Implements ARIA slider keyboard behavior and wraps each keyboard step in history. */
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (disabled) return;
     const { step, scale, min: a, max: b } = p.current;
     const linStep = step ?? (b - a) / 100;
     let next: number | null = null;
+    /** Converts one keyboard/page unit to a new linear or logarithmic value. */
     const nudge = (n: number) =>
       scale === 'log' ? fromPos(toPos(value) + n * 0.02) : clamp(Number((value + n * linStep).toFixed(6)), a, b);
     switch (e.key) {
@@ -315,6 +347,10 @@ export function Slider(props: SliderProps) {
 // ---------------------------------------------------------------------------
 // Small controls
 
+/**
+ * Mutually exclusive button group whose pressed state is derived entirely from the
+ * controlled `value`; it avoids hidden radio inputs while exposing group semantics.
+ */
 export function Segmented<T extends string | number>({
   value,
   options,
@@ -356,6 +392,10 @@ export const PALETTE = [
   '#7a4a2b',
 ];
 
+/**
+ * Accessible preset/custom color picker. Preset buttons and the native color input
+ * feed one controlled `onChange` callback and custom values get a marked swatch.
+ */
 export function Swatches({
   value,
   onChange,
@@ -407,8 +447,10 @@ const NAMES: Record<string, string> = {
   '#0047bb': 'Blue screen',
   '#0000ff': 'Bright blue',
 };
+/** Resolves common palette colors to accessible names, retaining unknown hex values. */
 export const colorName = (c: string) => NAMES[c.toLowerCase()] ?? c;
 
+/** Controlled switch row that exposes both its label/hint and binary state to AT. */
 export function Toggle({
   checked,
   onChange,
@@ -433,6 +475,7 @@ export function Toggle({
   );
 }
 
+/** Progressbar for normalized 0..1 determinate progress or an indeterminate task. */
 export function Progress({ value, label }: { value: number | null; label?: string }) {
   return (
     <div
@@ -459,6 +502,7 @@ export function loadPrefs<T extends object>(key: string, defaults: T): T {
   return { ...defaults };
 }
 
+/** Best-effort preference persistence; blocked/private storage must not break editing. */
 export function savePrefs(key: string, v: object) {
   try {
     localStorage.setItem(key, JSON.stringify(v));

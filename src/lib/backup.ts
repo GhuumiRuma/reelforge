@@ -20,7 +20,9 @@ import { ASPECTS, type ClipFolder, type ClipMeta, type MediaAsset, type Project 
 import { isBackgroundRemoval } from './background';
 import { projectMediaIds, type ClipRecord } from './db';
 
+/** File suffix recognized as ReelForge's portable backup container. */
 export const BACKUP_EXTENSION = '.rfbackup';
+/** Generic binary MIME used for downloads and native writes of backup containers. */
 export const BACKUP_MIME = 'application/octet-stream';
 
 /** Preferences kept in localStorage that are worth carrying over to another install. */
@@ -35,12 +37,14 @@ const TAIL = 4 + MAGIC.length;
 /** A real index is a few megabytes at most; anything bigger is a damaged file. */
 const MAX_INDEX = 256 * 1024 * 1024;
 
+/** A byte range inside a backup's binary payload, with the source blob's MIME hint. */
 export interface BlobRef {
   offset: number;
   size: number;
   type: string;
 }
 
+/** The versioned JSON directory written at the end of a backup file. */
 export interface BackupIndex {
   app: 'reelforge';
   format: number;
@@ -57,24 +61,49 @@ export interface BackupIndex {
 }
 
 /** Everything a backup reads and a restore writes. */
+/**
+ * Persistence boundary used by backup/restore.
+ *
+ * Production supplies IndexedDB/localStorage methods through `appStore`; keeping the protocol
+ * abstract makes validation and merge behavior independent of browser storage and native I/O.
+ */
 export interface BackupStore {
+  /** Reads a portable setting, returning `null` when absent. */
   getSetting(key: string): Promise<string | null>;
+  /** Restores a setting and any live behavior associated with it. */
   setSetting(key: string, value: string): Promise<void>;
+  /** Lists all saved projects. */
   listProjects(): Promise<Project[]>;
+  /** Reads one project by stable ID. */
   getProject(id: string): Promise<Project | undefined>;
+  /** Writes or replaces a complete project document. */
   saveProject(p: Project): Promise<void>;
+  /** Lists clip-library folders. */
   listFolders(): Promise<ClipFolder[]>;
+  /** Writes or replaces a folder. */
   putFolder(f: ClipFolder): Promise<void>;
+  /** Checks media presence without loading its blob. */
   hasMedia(id: string): Promise<boolean>;
+  /** Reads source metadata and bytes. */
   getMedia(id: string): Promise<{ asset: MediaAsset; blob: Blob } | undefined>;
+  /** Writes source metadata and bytes. */
   putMedia(asset: MediaAsset, blob: Blob): Promise<void>;
+  /** Lists saved clip IDs without transferring clip bodies. */
   clipIds(): Promise<string[]>;
+  /** Reads a full clip record. */
   getClip(id: string): Promise<ClipRecord | undefined>;
+  /** Writes a full clip record. */
   putClip(rec: ClipRecord): Promise<void>;
 }
 
-/** Where a backup is written. `onBytes` reports progress while a big part is being written. */
+/**
+ * Streaming destination for backup bytes.
+ *
+ * Each call appends exactly one part in order. `onBytes` reports incremental progress while a
+ * large part is being copied by a sink that can stream rather than retain the complete backup.
+ */
 export interface BackupSink {
+  /** Appends one binary part and optionally reports partial bytes written. */
   write(part: Blob | Uint8Array<ArrayBuffer>, onBytes?: (n: number) => void): Promise<void>;
 }
 
@@ -82,19 +111,27 @@ export interface BackupSink {
 export class BlobSink implements BackupSink {
   private parts: BlobPart[] = [];
 
+  /** Retains a blob/byte reference and immediately reports the complete part as written. */
   async write(part: Blob | Uint8Array<ArrayBuffer>, onBytes?: (n: number) => void): Promise<void> {
     this.parts.push(part);
     onBytes?.(part instanceof Blob ? part.size : part.byteLength);
   }
 
+  /** Produces the complete in-memory backup with the canonical binary MIME type. */
   toBlob(): Blob {
     return new Blob(this.parts, { type: BACKUP_MIME });
   }
 }
 
+/** Machine-readable categories used by restore UI to choose a useful error message. */
 export type BackupProblem = 'not-backup' | 'incomplete' | 'newer' | 'damaged';
 
+/**
+ * Typed restore error that distinguishes unsupported/new containers from incomplete or damaged
+ * data. The human-readable message is safe to display directly in backup UI.
+ */
 export class BackupError extends Error {
+  /** Creates a display-safe error with a stable machine-readable restore category. */
   constructor(
     readonly problem: BackupProblem,
     message: string,
@@ -104,6 +141,7 @@ export class BackupError extends Error {
   }
 }
 
+/** Constructs the standard cancellation failure used throughout backup/restore progress points. */
 const abortError = () => new DOMException('Cancelled', 'AbortError');
 
 /** `ReelForge-backup-2026-07-14-1530.rfbackup`; the time keeps two backups on one day apart. */
@@ -116,6 +154,7 @@ export function backupFileName(files: boolean, at = new Date()): string {
 // ---------------------------------------------------------------------------
 // Writing
 
+/** Controls which data are copied and how writing can report progress or be cancelled. */
 export interface BackupOptions {
   /** also copy videos, photos and clips; without it the backup holds only projects and settings */
   files: boolean;
@@ -125,6 +164,7 @@ export interface BackupOptions {
   onProgress?: (progress: number, label: string) => void;
 }
 
+/** Counts and bytes returned after a completed write. */
 export interface BackupSummary {
   projects: number;
   folders: number;
@@ -137,14 +177,17 @@ export interface BackupSummary {
   files: boolean;
 }
 
+/** Serializes an unsigned 32-bit file field in the format's little-endian byte order. */
 const u32 = (n: number): Uint8Array<ArrayBuffer> => {
   const b = new Uint8Array(4);
   new DataView(b.buffer).setUint32(0, n, true);
   return b;
 };
 
+/** Measures a sink part without reading or copying its contents. */
 const sizeOf = (part: Blob | Uint8Array): number => (part instanceof Blob ? part.size : part.byteLength);
 
+/** Reads only the allow-listed portable preferences into the backup index. */
 async function readSettings(store: BackupStore): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   for (const key of SETTING_KEYS) {
@@ -154,6 +197,7 @@ async function readSettings(store: BackupStore): Promise<Record<string, string>>
   return out;
 }
 
+/** Snapshot of IDs and sizes settled before any bytes are written. */
 interface Gathered {
   projects: Project[];
   folders: ClipFolder[];
@@ -200,6 +244,7 @@ async function gather(store: BackupStore, files: boolean, check: () => void): Pr
   return { projects, folders, settings, mediaIds, clipIds, missing, bytes };
 }
 
+/** Dry-run counts and data bytes for a potential backup. */
 export interface BackupEstimate {
   projects: number;
   media: number;
@@ -217,6 +262,13 @@ export async function estimateBackup(store: BackupStore, files: boolean, signal?
   return { projects: g.projects.length, media: g.mediaIds.length, clips: g.clipIds.length, missing: g.missing, bytes: g.bytes };
 }
 
+/**
+ * Streams one complete backup into `sink`.
+ *
+ * The header, referenced source blobs, clips, JSON index, index length, and closing marker are
+ * appended in order. Cancellation is checked between records and propagated to the sink/filesystem
+ * caller; a stopped sink may leave an incomplete file, which `openBackup` will reject.
+ */
 export async function writeBackup(store: BackupStore, sink: BackupSink, opts: BackupOptions): Promise<BackupSummary> {
   const { signal, onProgress } = opts;
   const check = () => {
@@ -291,17 +343,25 @@ export async function writeBackup(store: BackupStore, sink: BackupSink, opts: Ba
 // ---------------------------------------------------------------------------
 // Reading
 
+/** Validates ordinary non-array JSON objects without accepting null/prototypes as data. */
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+/** Accepts only primitive JSON strings. */
 const isStr = (v: unknown): v is string => typeof v === 'string';
+/** Accepts finite JSON numbers, excluding overflow and NaN values. */
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+/** Accepts primitive booleans. */
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
+/** Bounds stable IDs so corrupt indexes cannot create pathological storage keys. */
 const isId = (v: unknown): v is string => isStr(v) && v.length > 0 && v.length <= 200;
+/** Accepts an absent legacy string field or a valid string. */
 const optStr = (v: unknown) => v === undefined || isStr(v);
 
+/** Validates the fields needed to restore a folder without trusting arbitrary index objects. */
 function isFolder(v: unknown): v is ClipFolder {
   return isObj(v) && isId(v.id) && isStr(v.name) && isNum(v.createdAt);
 }
 
+/** Validates every required media-metadata field before it can enter IndexedDB. */
 function isAsset(v: unknown): v is MediaAsset {
   return (
     isObj(v) &&
@@ -320,6 +380,7 @@ function isAsset(v: unknown): v is MediaAsset {
   );
 }
 
+/** Validates clip metadata, including optional legacy/source fields and bounded background settings. */
 function isClipMeta(v: unknown): v is ClipMeta {
   return (
     isObj(v) &&
@@ -343,7 +404,9 @@ function isClipMeta(v: unknown): v is ClipMeta {
   );
 }
 
+/** Item kinds the current backup format understands. */
 const ITEM_TYPES = ['video', 'image', 'color', 'text', 'audio'];
+/** Item kinds that must carry a stable media asset reference. */
 const USES_MEDIA = ['video', 'image', 'audio'];
 
 /** Checks the parts of an item that listing and storing projects rely on. */
@@ -354,6 +417,10 @@ function isItem(v: unknown): boolean {
   return !USES_MEDIA.includes(v.type) || isId(v.mediaId);
 }
 
+/**
+ * Validates the project fields needed to store, list, and render restored documents.
+ * Deep visual/style fields are restored as data; only schema-critical keys and tracks are checked.
+ */
 function isProject(v: unknown): v is Project {
   if (!isObj(v) || !isId(v.id) || !isStr(v.name) || !isNum(v.createdAt) || !isNum(v.updatedAt) || !isNum(v.fps)) return false;
   if (v.version !== 1 || !ASPECTS.some((a) => a.id === v.aspect) || !isObj(v.background)) return false;
@@ -363,6 +430,7 @@ function isProject(v: unknown): v is Project {
   });
 }
 
+/** Validates that a blob reference stays inside the payload region before the JSON directory. */
 function isRef(v: unknown, dataEnd: number): v is BlobRef {
   return (
     isObj(v) &&
@@ -376,6 +444,7 @@ function isRef(v: unknown, dataEnd: number): v is BlobRef {
   );
 }
 
+/** Parsed, validated backup index and its original lazily sliced source blob. */
 export interface OpenedBackup {
   index: BackupIndex;
   source: Blob;
@@ -383,9 +452,16 @@ export interface OpenedBackup {
   dropped: number;
 }
 
+/** Produces the shared typed error for malformed indexes and out-of-range data. */
 const damaged = () => new BackupError('damaged', 'This backup file is damaged and can’t be restored.');
 
-/** Reads and checks a backup file without loading its contents. Throws a BackupError for a file that can't be used. */
+/**
+ * Parses and validates a backup directory without loading binary payloads into memory.
+ *
+ * Header format, terminal marker, bounded index size, JSON shape, IDs, and every blob range are
+ * checked. Invalid optional entries are counted/dropped; a structurally unusable source rejects
+ * with a categorized `BackupError` before restore performs persistence writes.
+ */
 export async function openBackup(source: Blob): Promise<OpenedBackup> {
   const bytes = async (from: number, to: number) => new Uint8Array(await source.slice(from, to).arrayBuffer());
   const hasMagic = (b: Uint8Array, at: number) => MAGIC.every((c, i) => b[at + i] === c);
@@ -444,11 +520,13 @@ export async function openBackup(source: Blob): Promise<OpenedBackup> {
 // ---------------------------------------------------------------------------
 // Restoring
 
+/** Cancellation and progress hooks for an incremental restore. */
 export interface RestoreOptions {
   signal?: AbortSignal;
   onProgress?: (progress: number, label: string) => void;
 }
 
+/** Merge outcomes returned after every allowed backup entry has been processed. */
 export interface RestoreSummary {
   projects: { added: number; updated: number; kept: number };
   media: { added: number; kept: number };
@@ -460,6 +538,14 @@ export interface RestoreSummary {
   dropped: number;
 }
 
+/**
+ * Merges a validated backup into a store without deleting existing user data.
+ *
+ * Folders and missing media/clips are added first so project references become resolvable.
+ * Same-ID media/clips/folders are kept, while projects update only when the backup is newer and has
+ * all referenced media. Settings are written only when absent. Cancellation can leave a partial
+ * but referentially safe merge that can be resumed by restoring again.
+ */
 export async function restoreBackup(opened: OpenedBackup, store: BackupStore, opts: RestoreOptions = {}): Promise<RestoreSummary> {
   const { index, source } = opened;
   const { signal, onProgress } = opts;

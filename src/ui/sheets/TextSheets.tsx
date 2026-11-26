@@ -1,3 +1,8 @@
+/**
+ * Text/caption editing and styling sheets. Preset previews use CSS equivalents of
+ * render styles, text creation begins lazily on first nonblank input, and caption
+ * edits can fan out to every caption while ordinary text retains its own style.
+ */
 import { AlignCenter, AlignLeft, AlignRight, CaseUpper, Italic, Palette, type LucideIcon } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Project, TextItem, TextStyle, Word } from '../../types';
@@ -25,6 +30,7 @@ export function presetStyle(cur: TextStyle, p: Preset): TextStyle {
   };
 }
 
+/** Determines pressed preset state while intentionally ignoring intentionally variable size. */
 function matchesPreset(s: TextStyle, p: Preset): boolean {
   return (Object.keys(p.style) as (keyof TextStyle)[]).every((k) => k === 'size' || s[k] === p.style[k]);
 }
@@ -45,6 +51,7 @@ function retimeWords(words: Word[], text: string): Word[] | undefined {
   });
 }
 
+/** Translates renderer text fields into CSS for a small accessible preset preview. */
 function sampleCss(st: TextStyle): CSSProperties {
   const px = 22;
   const box = st.bgOpacity > 0.001;
@@ -67,6 +74,10 @@ function sampleCss(st: TextStyle): CSSProperties {
   };
 }
 
+/**
+ * Renders and warms the fonts for a preset collection before presenting its visual
+ * samples; selection is controlled by the caller's project/caption preference.
+ */
 export function PresetTiles({
   presets,
   isActive,
@@ -111,6 +122,11 @@ export function PresetTiles({
 // ---------------------------------------------------------------------------
 // Text editing (new text or existing)
 
+/**
+ * Creates text on the first nonblank keystroke or edits an existing/caption item.
+ * Store changes made by undo/redo reconcile the controlled textarea, and leaving an
+ * empty newly-created item removes it without leaving an unusable timeline object.
+ */
 export function TextEditSheet({ item, onClose }: { item: TextItem | null; onClose: () => void }) {
   const [id, setId] = useState<string | null>(item?.id ?? null);
   const idRef = useRef(id);
@@ -162,6 +178,10 @@ export function TextEditSheet({ item, onClose }: { item: TextItem | null; onClos
     [],
   );
 
+  /**
+   * Lazily creates normal text, or edits text and retimes caption word spans while
+   * merging consecutive typing into one undo step.
+   */
   const onChange = (v: string) => {
     textRef.current = v;
     setText(v);
@@ -187,6 +207,10 @@ export function TextEditSheet({ item, onClose }: { item: TextItem | null; onClos
     );
   };
 
+  /**
+   * Stores a pending style before creation, or applies a caption-wide/individual
+   * preset and remembers ordinary text styling for the next new item.
+   */
   const pickPreset = (p: Preset) => {
     const cur = idRef.current;
     if (!cur) {
@@ -207,6 +231,7 @@ export function TextEditSheet({ item, onClose }: { item: TextItem | null; onClos
     }
   };
 
+  /** Selects a created text item and replaces this editor with its full style sheet. */
   const openStyle = () => {
     const cur = idRef.current;
     if (!cur) return;
@@ -283,8 +308,10 @@ const SHORT_FONT: Record<string, string> = {
 let lastStyleTab: StyleTab = 'font';
 let applyToAllCaptions = true;
 
+/** Presents zero as Off while preserving a caller-specific formatter for active values. */
 const off = (f: (v: number) => string) => (v: number) => (v <= 0 ? 'Off' : f(v));
 
+/** Exposes a visual icon-only control to screen readers without duplicating text. */
 function IconLabel({ Icon, text }: { Icon: LucideIcon; text: string }) {
   return (
     <>
@@ -294,6 +321,11 @@ function IconLabel({ Icon, text }: { Icon: LucideIcon; text: string }) {
   );
 }
 
+/**
+ * Tabbed renderer-style controls for font, color, outline, background, layout,
+ * shadow, and karaoke highlight. Caption mode can target every caption; ordinary
+ * text is remembered for future creation, but not at the expense of its size.
+ */
 export function TextStyleSheet({ item, onClose }: { item: TextItem; onClose: () => void }) {
   const id = item.id;
   const s = item.style;
@@ -304,11 +336,13 @@ export function TextStyleSheet({ item, onClose }: { item: TextItem; onClose: () 
   const [all, setAll] = useState(applyToAllCaptions);
   const font = FONTS.find((f) => f.family === s.font);
 
+  /** Persists the selected style category across sheet remounts. */
   const setTab = (t: StyleTab) => {
     lastStyleTab = t;
     setTabState(t);
   };
 
+  /** Applies a partial style to one item or all caption items through project history. */
   const set = (patch: Partial<TextStyle>, merge?: string) => {
     const every = caption && all;
     useEditor.getState().apply(
@@ -551,6 +585,7 @@ const STICKERS: [string, string[]][] = [
   ['Fun', ['🎉', '🎊', '🎁', '🎂', '🍾', '🥂', '🎵', '🎶', '🎤', '🎧', '📸', '🎬', '📍', '💰', '💸', '💎', '👑', '🏆', '🥇', '🚀', '🌈', '☀️', '🌙', '🍕', '🍿', '☕', '🐶', '🐱', '🦋', '🌸']],
 ];
 
+/** Inserts one emoji as a styled text item and closes after the single action. */
 export function StickerSheet({ onClose }: { onClose: () => void }) {
   return (
     <Sheet title="Stickers" onClose={onClose} closeIcon="x">

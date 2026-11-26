@@ -1,3 +1,9 @@
+/**
+ * Backup/restore state machine. Long operations report through one cancellable job,
+ * retain partially completed restore results, and keep close disabled until abort
+ * cleanup or the operation settles; native and browser save/share paths diverge only
+ * after a valid backup blob has been assembled.
+ */
 import { ArchiveRestore, DatabaseBackup, FolderOpen, Share } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -62,8 +68,10 @@ interface JobContext {
   show(progress: number | null, label?: string): void;
 }
 
+/** Detects cancellation without depending on the concrete AbortError realm. */
 const isAbort = (e: unknown) => (e as { name?: string } | null)?.name === 'AbortError';
 
+/** Converts storage/background failures into actionable, user-facing backup messages. */
 function describe(e: unknown): string {
   if (e instanceof BackupError) return e.message;
   const msg = e instanceof Error ? e.message : String(e ?? '');
@@ -75,8 +83,10 @@ function describe(e: unknown): string {
   return msg || 'Something went wrong.';
 }
 
+/** Formats backup metadata in the user's locale for restore previews. */
 const when = (t: number) => new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
+/** Maps the discriminated workflow state to the sheet's current accessible title. */
 function titleOf(v: View): string {
   switch (v.kind) {
     case 'running':
@@ -92,6 +102,7 @@ function titleOf(v: View): string {
   }
 }
 
+/** Presents a compact ordered set of backup or restore summary counts. */
 function Rows({ rows }: { rows: [string, string | number][] }) {
   return (
     <div className="stats">
@@ -105,6 +116,7 @@ function Rows({ rows }: { rows: [string, string | number][] }) {
   );
 }
 
+/** Shapes a common summary row list, omitting file counts for metadata-only backups. */
 function backupRows(s: { projects: number; media: number; clips: number }, files: boolean, size: string | null): [string, string | number][] {
   const rows: [string, string | number][] = [['Projects', s.projects]];
   // A backup made without files has none to count.
@@ -113,6 +125,7 @@ function backupRows(s: { projects: number; media: number; clips: number }, files
   return rows;
 }
 
+/** Explains unavailable source files without treating the whole backup as invalid. */
 function MissingNote({ n }: { n: number }) {
   if (n <= 0) return null;
   return (
@@ -130,6 +143,11 @@ interface Props {
   onBackedUp: () => void;
 }
 
+/**
+ * Drives estimate, save, share, file-check, and restore branches from one View
+ * discriminant. Callbacks inform Home that its project/clip lists or backup reminder
+ * may need to refresh, even after a partial or cancelled restore.
+ */
 export function BackupSheet({ onClose, onRestored, onBackedUp }: Props) {
   const native = isNativeApp();
   const [view, setView] = useState<View>({ kind: 'home' });
@@ -168,11 +186,16 @@ export function BackupSheet({ onClose, onRestored, onBackedUp }: Props) {
     return () => ac.abort();
   }, [atHome, withFiles]);
 
+  /**
+   * Serializes one job, owns its AbortController/wake lock, forwards progress, and
+   * only publishes the result while this sheet remains mounted.
+   */
   const run = (job: Job, label: string, work: (ctx: JobContext) => Promise<View>) => {
     if (ctl.current) return;
     const ac = new AbortController();
     ctl.current = ac;
     let text = label;
+    /** Publishes normalized job progress/text only while the owning sheet is mounted. */
     const show = (progress: number | null, next?: string) => {
       if (next) text = next;
       if (mounted.current) setView({ kind: 'running', job, label: text, progress, stopping: ac.signal.aborted });
@@ -194,6 +217,7 @@ export function BackupSheet({ onClose, onRestored, onBackedUp }: Props) {
     })();
   };
 
+  /** Requests cooperative cancellation while keeping the sheet busy during cleanup. */
   const cancel = () => {
     const ac = ctl.current;
     if (!ac || ac.signal.aborted) return;
@@ -201,12 +225,18 @@ export function BackupSheet({ onClose, onRestored, onBackedUp }: Props) {
     setView((v) => (v.kind === 'running' ? { ...v, stopping: true } : v));
   };
 
+  /** Records a completed save/share for reminder scheduling and updates Home state. */
   const markDone = () => {
     markBackedUp();
     if (mounted.current) setLastBackup(readLastBackup());
     onBackedUp();
   };
 
+  /**
+   * Estimates nothing at save time; builds the selected backup into memory, saves or
+   * downloads it by platform, and retains the blob as a share fallback on native save
+   * failure.
+   */
   const saveBackup = () =>
     run('backup', 'Reading your projects…', async ({ signal, show }) => {
       const files = withFiles;
@@ -242,6 +272,7 @@ export function BackupSheet({ onClose, onRestored, onBackedUp }: Props) {
       }
     });
 
+  /** Shares an already validated backup and preserves it as the retry target on failure. */
   const share = (saved: Saved) =>
     run('share', 'Getting your backup ready…', async ({ signal, show }) => {
       try {
@@ -257,6 +288,10 @@ export function BackupSheet({ onClose, onRestored, onBackedUp }: Props) {
       }
     });
 
+  /**
+   * Restores an opened archive additively. The finally callback refreshes Home even
+   * for cancellation/failure because earlier records may already have been written.
+   */
   const restore = (opened: OpenedBackup, name: string) =>
     run('restore', 'Getting ready…', async ({ signal, show }) => {
       try {
@@ -278,6 +313,10 @@ export function BackupSheet({ onClose, onRestored, onBackedUp }: Props) {
       }
     });
 
+  /**
+   * Opens the picker synchronously, then validates the selected archive in a
+   * cancellable job. A tap generation ignores stale responses from dismissed pickers.
+   */
   const choose = () => {
     if (ctl.current) return;
     const tap = ++pickTaps.current;
@@ -298,6 +337,7 @@ export function BackupSheet({ onClose, onRestored, onBackedUp }: Props) {
     });
   };
 
+  /** Replays the exact saved-backup or parsed-archive branch represented by an error. */
   const retry = (r: Retry) => {
     if (r.kind === 'backup') saveBackup();
     else if (r.kind === 'pick') choose();
@@ -305,6 +345,7 @@ export function BackupSheet({ onClose, onRestored, onBackedUp }: Props) {
     else share(r.saved);
   };
 
+  /** Returns from preview/error branches to the estimate and entry controls. */
   const home = () => setView({ kind: 'home' });
 
   let body: ReactNode;

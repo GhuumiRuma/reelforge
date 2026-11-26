@@ -1,3 +1,8 @@
+/**
+ * Clip-library screen and viewer. Metadata is filtered in React while media blobs
+ * are loaded only for preview/share actions; changes to folders or records trigger
+ * a full lightweight list refresh.
+ */
 import { Clapperboard, Download, EllipsisVertical, Film, FolderInput, FolderPlus, Music, Pencil, Play, Search, Share2, Trash, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ClipFolder, ClipMeta } from '../types';
@@ -19,6 +24,7 @@ interface Row {
   poster: Blob | null;
 }
 
+/** Shares a stored clip file natively, falling back to a browser download. */
 async function shareClip(id: string) {
   const file = await clipFile(id);
   if (!file) return;
@@ -31,6 +37,7 @@ async function shareClip(id: string) {
   }
 }
 
+/** Downloads a stored clip without altering its library metadata. */
 async function saveClipToDevice(id: string) {
   const file = await clipFile(id);
   if (file) downloadBlob(file, file.name);
@@ -45,6 +52,7 @@ export function ClipsLibrary() {
   const [query, setQuery] = useState('');
   const [playing, setPlaying] = useState<ClipMeta | null>(null);
 
+  /** Reloads clip/folder metadata and recovers by showing an empty list on failure. */
   const refresh = () => {
     void Promise.all([listClips(), listFolders()])
       .then(([r, f]) => {
@@ -62,8 +70,10 @@ export function ClipsLibrary() {
 
   const shown = useMemo(() => filterClips(rows?.map((r) => r.meta) ?? [], { folder, kind, query }), [rows, folder, kind, query]);
   const posters = useMemo(() => new Map(rows?.map((r) => [r.meta.id, r.poster]) ?? []), [rows]);
+  /** Resolves a metadata folder ID to its current display name, if still present. */
   const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name;
 
+  /** Prompts for and persists a uniquely named folder, returning it for follow-up selection. */
   const newFolder = async (): Promise<ClipFolder | null> => {
     const name = (await promptDialog({ title: 'New folder', placeholder: 'Folder name', confirm: 'Create' }))?.trim();
     if (!name) return null;
@@ -79,6 +89,7 @@ export function ClipsLibrary() {
     return f;
   };
 
+  /** Creates a folder and immediately selects it in the filter chips. */
   const addFolder = async () => {
     const f = await newFolder();
     if (!f) return;
@@ -86,6 +97,7 @@ export function ClipsLibrary() {
     setFolder(f.id);
   };
 
+  /** Renames or deletes a folder; deletion deliberately leaves its clips unfiled. */
   const folderMenu = async (f: ClipFolder) => {
     const choice = await menuDialog({
       title: f.name,
@@ -113,6 +125,7 @@ export function ClipsLibrary() {
     }
   };
 
+  /** Lets a clip move to a folder, become unfiled, or create/select a new folder. */
   const moveTo = async (c: ClipMeta) => {
     const choice = await menuDialog({
       title: `Move "${c.name}"`,
@@ -135,6 +148,7 @@ export function ClipsLibrary() {
     toast(target ? `Moved to ${folderName(target) ?? 'folder'}` : 'Removed from folder');
   };
 
+  /** Creates a fresh project and hands this blob/effect metadata to Editor's importer. */
   const useInProject = async (c: ClipMeta) => {
     const file = await clipFile(c.id);
     if (!file) return;
@@ -150,6 +164,7 @@ export function ClipsLibrary() {
     openProject(p.id);
   };
 
+  /** Dispatches the selected row action and normalizes user-facing storage failures. */
   const menu = async (c: ClipMeta) => {
     const choice = await menuDialog({
       title: c.name,
@@ -289,6 +304,7 @@ export function ClipsLibrary() {
   );
 }
 
+/** Owns and revokes the short-lived object URL for a clip-list poster. */
 function Poster({ blob, kind }: { blob: Blob | null; kind: 'video' | 'audio' }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -304,6 +320,10 @@ function Poster({ blob, kind }: { blob: Blob | null; kind: 'video' | 'audio' }) 
   );
 }
 
+/**
+ * Loads a clip blob only while the viewer is mounted, revokes its URL on close,
+ * and chooses native video/audio controls according to metadata.
+ */
 function ClipViewer({ clip, onClose }: { clip: ClipMeta; onClose: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {

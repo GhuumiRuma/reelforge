@@ -1,6 +1,11 @@
+/**
+ * Filter presets and their conversion from persisted visual state into render parameters.
+ * The preset registry is UI data; `computeFx` is the normalized hand-off to WebGL/canvas effects.
+ */
 import type { Adjust, Visual } from '../types';
 import { DEFAULT_ADJUST } from './defaults';
 
+/** Extended renderer controls added by presets on top of user-adjustable tonal parameters. */
 export interface FxParams extends Adjust {
   sepia: number;
   splitShadow: [number, number, number];
@@ -8,8 +13,10 @@ export interface FxParams extends Adjust {
   splitAmount: number;
 }
 
+/** Stable iteration order for every numeric user adjustment in a visual item. */
 export const ADJUST_KEYS = Object.keys(DEFAULT_ADJUST) as (keyof Adjust)[];
 
+/** UI labels and safe slider limits for manually adjustable tonal effects. */
 export const ADJUST_DEFS: { key: keyof Adjust; label: string; min: number; max: number }[] = [
   { key: 'brightness', label: 'Brightness', min: -1, max: 1 },
   { key: 'contrast', label: 'Contrast', min: -1, max: 1 },
@@ -25,6 +32,7 @@ export const ADJUST_DEFS: { key: keyof Adjust; label: string; min: number; max: 
   { key: 'sharpen', label: 'Sharpen', min: 0, max: 1 },
 ];
 
+/** Display metadata and renderer parameters for a named filter preset. */
 export interface FilterDef {
   id: string;
   name: string;
@@ -32,6 +40,7 @@ export interface FilterDef {
   swatch: string;
 }
 
+/** Built-in filter catalog, including swatch CSS for the preset picker. */
 export const FILTERS: FilterDef[] = [
   { id: 'none', name: 'None', params: {}, swatch: 'linear-gradient(135deg,#3a3a44,#202027)' },
   { id: 'vivid', name: 'Vivid', params: { saturation: 0.35, contrast: 0.15 }, swatch: 'linear-gradient(135deg,#ff4d6d,#ffd23f)' },
@@ -75,6 +84,13 @@ export const FILTERS: FilterDef[] = [
   { id: 'noir', name: 'Noir', params: { saturation: -1, contrast: 0.45, vignette: 0.5, exposure: -0.1 }, swatch: 'linear-gradient(135deg,#6c757d,#000)' },
 ];
 
+/**
+ * Combines a selected preset with per-item adjustments into renderer-ready values.
+ *
+ * Preset parameters are multiplied by `filterAmount`, then user adjustments are added. A `null`
+ * result means the renderer can skip the entire effect pass; split-tone defaults are retained only
+ * when another calculated effect is active.
+ */
 export function computeFx(v: Pick<Visual, 'filter' | 'filterAmount' | 'adjust'>): FxParams | null {
   const def = FILTERS.find((f) => f.id === v.filter);
   const a = def && def.id !== 'none' ? v.filterAmount : 0;

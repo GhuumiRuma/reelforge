@@ -1,3 +1,8 @@
+/**
+ * Deterministic offline renderer/exporter. It owns a cloned project snapshot,
+ * exact-frame providers, audio mixing, WebGL composition, and in-memory MP4
+ * encoding, while live preview remains isolated from encoder/timeline state.
+ */
 import {
   ALL_FORMATS,
   AudioBufferSource,
@@ -27,15 +32,19 @@ import { subjectMatte, subjectMatteKey, type BackgroundStatus } from './backgrou
 import { Compositor } from './gl';
 import { buildFrame, TextCache, type FrameProvider, type FrameSource } from './scene';
 
+/** Supported short-side output resolutions, in pixels. */
 export type ExportResolution = 720 | 1080 | 1440 | 2160;
+/** User-facing quality presets mapped to a bounded bits-per-pixel heuristic. */
 export type ExportQuality = 'low' | 'medium' | 'high';
 
+/** Encoder dimensions/rate settings captured at the start of an export. */
 export interface ExportSettings {
   resolution: ExportResolution;
   fps: number;
   quality: ExportQuality;
 }
 
+/** Monotonic phase-local progress plus an optional wall-clock ETA estimate. */
 export interface ExportProgress {
   phase: 'prepare' | 'cutout' | 'render' | 'finalize';
   /** 0..1 */
@@ -44,6 +53,7 @@ export interface ExportProgress {
   eta: number | null;
 }
 
+/** Completed MP4 bytes and metadata returned after finalization. */
 export interface ExportResult {
   blob: Blob;
   width: number;
@@ -57,16 +67,24 @@ const BPP: Record<ExportQuality, number> = { low: 0.06, medium: 0.11, high: 0.18
 const AUDIO_BITRATE = 192_000;
 const SAMPLE_RATE = 48_000;
 
+/** Converts an aspect ratio and requested short side to concrete canvas dimensions. */
 export function exportDims(p: Project, s: Pick<ExportSettings, 'resolution'>) {
   return canvasSize(p.aspect, s.resolution);
 }
 
+/**
+ * Estimates video bits/s from output pixels, frame rate, and quality.
+ * The result is clamped to avoid unusable tiny or browser-hostile huge requests.
+ */
 export function videoBitrate(p: Project, s: ExportSettings): number {
   const { w, h } = exportDims(p, s);
   return Math.round(clamp(w * h * s.fps * BPP[s.quality], 1_000_000, 80_000_000));
 }
 
-/** Approximate output size in bytes. */
+/**
+ * Estimates total MP4 bytes from video bitrate, a fixed audio allowance, and
+ * project duration. Container/index overhead and silence are not modeled.
+ */
 export function estimateSize(p: Project, s: ExportSettings): number {
   return ((videoBitrate(p, s) + AUDIO_BITRATE) / 8) * projectDuration(p);
 }
@@ -74,13 +92,22 @@ export function estimateSize(p: Project, s: ExportSettings): number {
 // ---------------------------------------------------------------------------
 // Sequential frame sources (exact frames, decoded in order)
 
+/** Sequential source contract used only during one export/still render pass. */
 interface SeqSource {
+  /** Supplies the last decoded source frame at or before `st` for the caller's scene build. */
   frameAt(st: number): Promise<FrameSource | null>;
+  /** Releases this provider's input/iterator/video state before it is discarded. */
   dispose(): void;
 }
 
 let exportVersion = 0;
 
+/**
+ * WebCodecs/CanvasSink provider for ordered video decoding.
+ *
+ * It keeps one look-ahead frame and restarts only for backward or large forward
+ * seeks, trading a small buffer for much faster frame-by-frame export.
+ */
 class SinkFrames implements SeqSource {
   private input: Input | null = null;
   private sink: CanvasSink | null = null;
@@ -90,11 +117,13 @@ class SinkFrames implements SeqSource {
   private done = false;
   private version = 0;
 
+  /** Captures the blob and maximum decoded side without opening demux/codec resources yet. */
   constructor(
     private blob: Blob,
     private maxSide: number,
   ) {}
 
+  /** Opens the primary track and constructs a bounded CanvasSink scaled to `maxSide`. */
   private async open() {
     this.input = new Input({ formats: ALL_FORMATS, source: new BlobSource(this.blob) });
     const track = await this.input.getPrimaryVideoTrack();
@@ -110,6 +139,10 @@ class SinkFrames implements SeqSource {
     });
   }
 
+  /**
+   * Closes the old async iterator and starts decoding at or near `st`.
+   * Restarting also resets the look-ahead frame and timestamp state.
+   */
   private async restart(st: number) {
     if (!this.sink) await this.open();
     await this.iter?.return();
@@ -124,6 +157,12 @@ class SinkFrames implements SeqSource {
     } else this.done = true;
   }
 
+  /**
+   * Returns the most recent decoded frame at or before `st`.
+   *
+   * The iterator advances only as needed for increasing timestamps, and each
+   * accepted canvas gets a process-global version for compositor invalidation.
+   */
   async frameAt(st: number): Promise<FrameSource | null> {
     if (!this.iter || (this.cur && st < this.cur.timestamp - 1e-3) || (this.cur && st > this.cur.timestamp + 3)) {
       await this.restart(st);
@@ -146,6 +185,7 @@ class SinkFrames implements SeqSource {
     return this.cur ? { source: this.cur.canvas, version: this.version } : null;
   }
 
+  /** Stops iteration and disposes the demux input, leaving only lazy source inputs for possible reopening. */
   dispose() {
     void this.iter?.return().catch(() => undefined);
     this.iter = null;
@@ -155,18 +195,30 @@ class SinkFrames implements SeqSource {
   }
 }
 
-/** Fallback for codecs WebCodecs cannot decode: seek a <video> element frame by frame. */
+/**
+ * HTML media-element fallback for codecs WebCodecs cannot decode.
+ *
+ * Seeking is exact-enough for export ordering but substantially slower than a
+ * streaming `CanvasSink`; the current frame is retained in a single scaled
+ * canvas and invalidated by version.
+ */
 class ElementFrames implements SeqSource {
   private v: HTMLVideoElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private version = 0;
   private last = -1;
 
+  /** Stores media identity and the output decode limit until a first frame is needed. */
   constructor(
     private mediaId: string,
     private maxSide: number,
   ) {}
 
+  /**
+   * Lazily loads a URL-backed video, seeks when the requested time changes, and
+   * copies that frame into a reusable downscaled canvas. Missing URLs return
+   * `null`; the object remains reusable for later requests.
+   */
   async frameAt(st: number): Promise<FrameSource | null> {
     if (!this.v) {
       const url = await getObjectUrl(this.mediaId);
@@ -193,6 +245,7 @@ class ElementFrames implements SeqSource {
     return { source: this.canvas, version: this.version };
   }
 
+  /** Releases the media element's URL-backed decoder and clears it for GC. */
   dispose() {
     if (this.v) {
       this.v.removeAttribute('src');
@@ -202,7 +255,13 @@ class ElementFrames implements SeqSource {
   }
 }
 
-/** Provides exact frames for an offline render pass. Call `prepare(t)` before `buildFrame(t)`. */
+/**
+ * Frame-provider adapter for a single offline render pass.
+ *
+ * `prepare` records the scene's requested frames in a dry run, fulfills them,
+ * and then exposes synchronous lookups during the real `buildFrame` call.
+ * This two-pass pattern lets scene logic stay provider-agnostic.
+ */
 class OfflineFrames implements FrameProvider {
   private sources = new Map<string, SeqSource>();
   private ready = new Map<string, FrameSource | null>();
@@ -211,21 +270,28 @@ class OfflineFrames implements FrameProvider {
   private imageRequests = new Map<string, ImageItem>();
   private recording = false;
 
+  /** Captures decode limits and optional cancellation/cutout progress callbacks. */
   constructor(
     private maxSide: number,
     private options: { signal?: AbortSignal; onCutout?: (status: BackgroundStatus) => void } = {},
   ) {}
 
+  /** Records a video dependency while dry-running; otherwise returns the prepared frame. */
   video(item: VideoItem, st: number): FrameSource | null {
     if (this.recording) this.requests.set(item.id, { item, st });
     return this.ready.get(item.id) ?? null;
   }
 
+  /** Records an image dependency while dry-running, then returns a prepared/cached frame. */
   image(item: ImageItem): FrameSource | null {
     if (this.recording) this.imageRequests.set(item.id, item);
     return this.readyImages.get(item.id) ?? (peekImage(item.mediaId) ? { source: peekImage(item.mediaId)!, version: 1 } : null);
   }
 
+  /**
+   * Lazily creates an exact-frame decoder for an item id, preferring WebCodecs
+   * when asset metadata says it is available and falling back to a video element.
+   */
   private async source(item: VideoItem): Promise<SeqSource> {
     let s = this.sources.get(item.id);
     if (s) return s;
@@ -237,7 +303,14 @@ class OfflineFrames implements FrameProvider {
     return s;
   }
 
-  /** Dry-run the scene to learn which frames are needed, then decode them. */
+  /**
+   * Dry-runs the scene to discover active media, then decodes and optionally
+   * segments each required frame before the real scene build.
+   *
+   * A WebCodecs decoder failure is replaced with `ElementFrames`. Cutout
+   * requests carry cancellation/progress through to the worker coordinator.
+   * Finished item decoders/caches are disposed/deleted as the timeline moves on.
+   */
   async prepare(p: Project, t: number, W: number, H: number, texts: TextCache) {
     this.requests.clear();
     this.imageRequests.clear();
@@ -305,6 +378,7 @@ class OfflineFrames implements FrameProvider {
     }
   }
 
+  /** Disposes all decoders and drops every prepared frame cache. */
   dispose() {
     for (const s of this.sources.values()) s.dispose();
     this.sources.clear();
@@ -313,6 +387,12 @@ class OfflineFrames implements FrameProvider {
   }
 }
 
+/**
+ * Loads all audio/video/image/text resources needed by the cloned project in
+ * parallel where possible. Font and image failures are intentionally tolerated
+ * because the renderer can use a later fallback/empty frame, while core asset
+ * loading still propagates.
+ */
 async function preloadResources(p: Project) {
   const ids = new Set<string>();
   for (const it of [...p.main, ...p.overlays, ...p.audios]) if ('mediaId' in it) ids.add(it.mediaId);
@@ -325,6 +405,11 @@ async function preloadResources(p: Project) {
 // ---------------------------------------------------------------------------
 // Encoders
 
+/**
+ * Selects a stereo/48 kHz output codec in browser order: AAC (including the
+ * polyfill registered by `canEncodeAac`) followed by Opus. A `null` result means
+ * the video is still encodable but is exported without audio.
+ */
 async function pickAudioCodec(): Promise<AudioCodec | null> {
   const opts = { numberOfChannels: 2, sampleRate: SAMPLE_RATE, bitrate: AUDIO_BITRATE };
   if (await canEncodeAac(opts)) return 'aac';
@@ -332,21 +417,42 @@ async function pickAudioCodec(): Promise<AudioCodec | null> {
   return null;
 }
 
+/** Picks the first supported hardware/browser video codec from the preferred compatibility order. */
 async function pickVideoCodec(w: number, h: number, fps: number, bitrate: number): Promise<VideoCodec | null> {
   return getFirstEncodableVideoCodec(['avc', 'hevc', 'vp9', 'av1'], { width: w, height: h, frameRate: fps, bitrate });
 }
 
-/** Checks whether this device can export the given settings (resolution / frame rate). */
+/**
+ * Probes whether WebCodecs and a preferred video codec support these exact
+ * dimensions, frame rate, and bitrate. It does not allocate an output and
+ * converts unsupported probe errors into `false`.
+ */
 export async function canExport(p: Project, s: ExportSettings): Promise<boolean> {
   if (typeof VideoEncoder === 'undefined') return false;
   const { w, h } = exportDims(p, s);
   return (await pickVideoCodec(w, h, s.fps, videoBitrate(p, s)).catch(() => null)) !== null;
 }
 
+/** Creates the stable cancellation exception expected by export callers. */
 function abortError() {
   return new DOMException('Export cancelled', 'AbortError');
 }
 
+/**
+ * Renders a project snapshot to an in-memory MP4 by interleaving audio-ahead
+ * mixing with exact-timestamp video frames.
+ *
+ * The project is deep-cloned so preview/store edits cannot change frame
+ * semantics mid-export. Resource preload, codec probing, frame preparation,
+ * canvas composition, and one-second audio mixing advance under an abort
+ * signal. Audio is scheduled at least one second ahead of video to keep the
+ * muxer fed; video timestamps are exactly `i / fps`. Progress reserves the
+ * final two percent for finalization, and errors propagate after every
+ * temporary decoder/mixer/compositor/output resource is cleaned up.
+ *
+ * The wake lock is released after completion/failure, though it is optional on
+ * unsupported platforms. A null audio codec intentionally creates a silent MP4.
+ */
 export async function exportVideo(
   project: Project,
   settings: ExportSettings,
@@ -389,6 +495,8 @@ export async function exportVideo(
   if (audio) output.addAudioTrack(audio);
 
   let audioT = 0;
+  // This closure advances the audio cursor in bounded one-second chunks and
+  // creates explicit silent buffers where the mixer finds no active source.
   const pushAudio = async (until: number) => {
     if (!audio || !mixer) return;
     while (audioT < until && audioT < duration) {
@@ -460,7 +568,15 @@ export async function exportVideo(
   }
 }
 
-/** Renders a single composited frame to an image (Save frame / thumbnails). */
+/**
+ * Renders one composited project frame to an encoded image blob.
+ *
+ * Time is clamped to the project endpoint. Per-call decoders, text cache, and GL
+ * state are private, while shared media/model caches remain available. The
+ * requested MIME type and quality are passed to `canvas.toBlob`; a null browser
+ * result becomes an error. No audio, progress, cancellation, or wake lock is
+ * involved.
+ */
 export async function renderStill(project: Project, t: number, shortSide = 1080, type = 'image/png'): Promise<Blob> {
   const p = JSON.parse(JSON.stringify(project)) as Project;
   const { w: W, h: H } = canvasSize(p.aspect, shortSide);

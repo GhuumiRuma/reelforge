@@ -1,3 +1,10 @@
+/**
+ * Validation and geometry helpers for the clip-capture/library workflow.
+ *
+ * This module is deliberately pure: it parses typed ranges and external links, calculates crop
+ * rectangles in normalized coordinates, filters saved clips, and derives source ranges without
+ * performing network or media I/O.
+ */
 import type { ClipMeta } from '../types';
 import { clamp, formatClock, parseTime } from './util';
 
@@ -6,8 +13,10 @@ export const MIN_CLIP = 0.1;
 /** End times typed up to this far past the end of the source snap to the end. */
 const END_SLACK = 1;
 
+/** Validated clip times, or the field-specific human-readable validation failure. */
 export type RangeCheck = { ok: true; start: number; end: number } | { ok: false; field: 'start' | 'end'; error: string };
 
+/** Normalizes user-entered times to the hundredth-second precision used by clip metadata. */
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /** Checks typed start and end times against a source `duration` seconds long. */
@@ -29,6 +38,7 @@ export function checkClipRange(startText: string, endText: string, duration: num
 // Crop
 
 /** A crop rectangle as fractions (0–1) of the source frame. */
+/** Crop origin and dimensions expressed as fractions of the source frame (0–1). */
 export interface CropRect {
   x: number;
   y: number;
@@ -36,10 +46,13 @@ export interface CropRect {
   h: number;
 }
 
+/** Immutable-by-convention seed rectangle that callers should copy before editing. */
 export const FULL_CROP: CropRect = { x: 0, y: 0, w: 1, h: 1 };
 
+/** Crop sizing modes, including fixed UI aspect presets. */
 export type CropAspect = 'original' | 'free' | '9:16' | '1:1' | '4:5' | '16:9';
 
+/** Ordered display options for the crop-aspect controls. */
 export const CROP_ASPECTS: { id: CropAspect; label: string }[] = [
   { id: 'original', label: 'Original' },
   { id: 'free', label: 'Free' },
@@ -102,6 +115,7 @@ export function resizeCrop(c: CropRect, dx: number, dy: number, ratio: number | 
   return { ...c, w, h };
 }
 
+/** Checks whether a crop effectively covers the frame, allowing subpixel UI noise. */
 export function isFullCrop(c: CropRect): boolean {
   return c.x <= 1e-4 && c.y <= 1e-4 && c.w >= 1 - 1e-4 && c.h >= 1 - 1e-4;
 }
@@ -170,10 +184,17 @@ export function isDirectMediaUrl(text: string): boolean {
 // ---------------------------------------------------------------------------
 // Library
 
+/** Clip-library media kind selector. */
 export type KindFilter = 'all' | 'video' | 'audio';
 /** A folder ID, or `all` / `unfiled`. */
 export type FolderFilter = string;
 
+/**
+ * Applies folder, media-kind, and case-insensitive name/source filters, then sorts newest first.
+ *
+ * The input array is not mutated. Folder IDs are treated literally except for the reserved `all`
+ * and `unfiled` selectors.
+ */
 export function filterClips(clips: ClipMeta[], o: { folder: FolderFilter; kind: KindFilter; query: string }): ClipMeta[] {
   const q = o.query.trim().toLowerCase();
   return clips

@@ -6,6 +6,12 @@ import { getClip, hasMedia, putMedia, type ClipRecord } from './db';
 import { ensurePeaks, ensureThumbs, loadAssets, probe, registerAsset } from './media';
 import { safeFileName } from './util';
 
+/**
+ * Materializes a stored clip as a browser `File`, preserving its MIME type and source extension.
+ *
+ * Only the metadata is copied into a newly constructed object; the IndexedDB blob is reused as
+ * the `File` payload.
+ */
 function recordFile(rec: ClipRecord): File {
   const ext = rec.meta.fileName.split('.').pop() ?? (rec.meta.kind === 'audio' ? 'm4a' : 'mp4');
   return new File([rec.blob], `${safeFileName(rec.meta.name, 'Clip')}.${ext}`, { type: rec.meta.mime });

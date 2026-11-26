@@ -1,9 +1,11 @@
 /** Color math for the appearance options: parsing, WCAG contrast and a lightness search. Pure, so it is unit-tested. */
 
+/** Opaque RGB channels normalized to the integer byte range 0–255. */
 export type RGB = [number, number, number];
-/** hue 0-360, saturation 0-1, lightness 0-1 */
+/** Cylindrical HSL channels: hue in degrees 0–360, saturation and lightness in 0–1. */
 export type HSL = [number, number, number];
 
+/** Restricts a numeric channel to a closed interval. */
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 /** A strict `#rrggbb` (any case) as lowercase, or null for anything else: short forms, names, stray spaces. */
@@ -11,7 +13,12 @@ export function parseHex(raw: unknown): string | null {
   return typeof raw === 'string' && /^#[0-9a-f]{6}$/i.test(raw) ? raw.toLowerCase() : null;
 }
 
-/** The 0-255 channels of `#rgb` or `#rrggbb`. */
+/**
+ * Converts a `#rgb` or `#rrggbb` string to byte channels.
+ *
+ * Callers provide syntactically valid colors; malformed input is not validated and follows
+ * `parseInt` semantics, so validation with {@link parseHex} should happen at an input boundary.
+ */
 export function toRgb(hex: string): RGB {
   let h = hex.replace('#', '');
   if (h.length === 3) h = h.replace(/./g, '$&$&');
@@ -19,10 +26,15 @@ export function toRgb(hex: string): RGB {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+/**
+ * Serializes RGB channels as six-digit lowercase CSS hex.
+ * Channels are rounded and clamped to 0–255, which makes floating-point color searches safe.
+ */
 export function toHex(rgb: RGB): string {
   return '#' + rgb.map((v) => clamp(Math.round(v), 0, 255).toString(16).padStart(2, '0')).join('');
 }
 
+/** Converts a CSS hex color to HSL while preserving hue as a positive degree value. */
 export function toHsl(hex: string): HSL {
   const [r, g, b] = toRgb(hex).map((v) => v / 255);
   const max = Math.max(r, g, b);
@@ -38,6 +50,11 @@ export function toHsl(hex: string): HSL {
   return [(h * 60 + 360) % 360, s, l];
 }
 
+/**
+ * Converts HSL to CSS hex, wrapping hue modulo 360 and rounding final byte channels.
+ * This is a pure conversion; out-of-range saturation/lightness inputs are expected to be normalized
+ * by the caller.
+ */
 export function fromHsl([hue, s, l]: HSL): string {
   const h = ((hue % 360) + 360) % 360;
   const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -54,12 +71,13 @@ export function fromHsl([hue, s, l]: HSL): string {
   return toHex([(r + m) * 255, (g + m) * 255, (b + m) * 255]);
 }
 
+/** Applies the sRGB electro-optical transfer curve used by WCAG luminance. */
 const linear = (c: number) => {
   const v = c / 255;
   return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
 };
 
-/** WCAG relative luminance: 0 for black, 1 for white. */
+/** Computes WCAG relative luminance of an opaque hex color, from 0 (black) to 1 (white). */
 export function luminance(hex: string): number {
   const [r, g, b] = toRgb(hex);
   return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);

@@ -1,8 +1,15 @@
+/** Best-effort tactile feedback for Android and recent iOS web apps. */
 import { isIOS } from './util';
 
 let iosSwitch: HTMLLabelElement | null = null;
 let last = 0;
 
+/**
+ * Creates and clicks a hidden native switch to trigger iOS's haptic behavior.
+ *
+ * This private compatibility path relies on iOS 18's native checkbox switch feedback and is kept
+ * offscreen, non-focusable, and outside assistive technology's control tree.
+ */
 function iosTick() {
   if (!iosSwitch) {
     const label = document.createElement('label');

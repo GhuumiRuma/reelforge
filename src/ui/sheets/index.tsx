@@ -1,3 +1,8 @@
+/**
+ * Central sheet router. It derives each sheet's target from selection or an explicit
+ * argument, closes targets invalidated by edits/undo, and remounts item sheets by ID
+ * so stale form state cannot leak to a newly selected item.
+ */
 import { useEffect } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { AudioItem, ColorItem, ImageItem, Item, TextItem, VideoItem, VisualItem } from '../../types';
@@ -26,10 +31,14 @@ import { MediaSheet } from './MediaSheet';
 import { SoundbiteSheet } from './SoundbiteSheet';
 import { StickerSheet, TextEditSheet, TextStyleSheet } from './TextSheets';
 
+/** Clears the current sheet and optional item argument through the editor store. */
 const close = () => useEditor.getState().closeSheet();
 
+/** Item predicate for sheets that accept video or image media. */
 const media = (it: Item) => it.type === 'video' || it.type === 'image';
+/** Item predicate for controls that change source timing/sound rate. */
 const timed = (it: Item) => it.type === 'video' || it.type === 'audio';
+/** Item predicate for layers that participate in visual compositing. */
 const visual = (it: Item) => it.type !== 'audio';
 
 /** Which items each item sheet can edit. */
@@ -51,6 +60,11 @@ const FITS: Partial<Record<SheetId, (it: Item) => boolean>> = {
   transition: (it) => it.type !== 'audio' && it.type !== 'text',
 };
 
+/**
+ * Subscribes only to sheet identity, argument, selected context, and validity. Root
+ * sheets require no item; transition/text sheets resolve explicit IDs, while all
+ * other item sheets use the currently valid selection.
+ */
 export function SheetHost() {
   const { sheet, arg } = useEditor(useShallow((s) => ({ sheet: s.sheet, arg: s.sheetArg })));
   const sel = useSelected();

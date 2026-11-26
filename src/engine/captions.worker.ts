@@ -1,13 +1,21 @@
+/**
+ * Worker-side speech recognition for the caption pipeline. It owns the
+ * Transformers model, performs silence-aware chunking to fit WASM inference
+ * limits, and converts model word timestamps back to project-relative seconds.
+ */
 import { env, pipeline } from '@huggingface/transformers';
 
+/** Whisper model sizes accepted by the lazy pipeline loader. */
 export type CaptionModel = 'tiny' | 'base';
 
+/** Untyped-to-typed recognizer token shape before main-thread normalization. */
 export interface RawWord {
   text: string;
   start: number;
   end: number;
 }
 
+/** One worker invocation and its transferred, resampled PCM contract. */
 export interface CaptionRequest {
   type: 'run';
   /** 16 kHz mono PCM */
@@ -18,6 +26,7 @@ export interface CaptionRequest {
   task: 'transcribe' | 'translate';
 }
 
+/** Download, transcription, result, and error protocol sent to the main thread. */
 export type CaptionWorkerMessage =
   | { type: 'load'; progress: number; loaded: number; total: number }
   | { type: 'progress'; progress: number }
@@ -30,14 +39,25 @@ const SILENCE_RMS = 0.004;
 
 env.allowLocalModels = false;
 
+/** ASR pipeline callback options and output shapes used after Transformers' generic type erasure. */
 type Chunk = { text: string; timestamp: [number, number | null] };
+/** A single model response, with optional word/chunk timestamps. */
 type AsrOutput = { text: string; chunks?: Chunk[] };
+/** Typed callable surface of the generic Transformers automatic-speech-recognition pipeline. */
 type Asr = (audio: Float32Array, opts: Record<string, unknown>) => Promise<AsrOutput | AsrOutput[]>;
 
 let loaded: { id: string; asr: Promise<Asr> } | null = null;
 
+/** Posts every worker event through the single typed message boundary. */
 const post = (m: CaptionWorkerMessage) => (self as unknown as { postMessage(m: CaptionWorkerMessage): void }).postMessage(m);
 
+/**
+ * Lazily constructs and caches the requested quantized WASM Whisper pipeline.
+ *
+ * The cache is one-entry because requests generally reuse a model, and model
+ * download progress is normalized to 0..1. A failed promise clears itself only
+ * if it is still the active cache entry, allowing a later request to retry.
+ */
 function load(model: CaptionModel): Promise<Asr> {
   const id = `onnx-community/whisper-${model}_timestamped`;
   if (loaded?.id === id) return loaded.asr;
@@ -61,7 +81,15 @@ function load(model: CaptionModel): Promise<Asr> {
   return asr;
 }
 
-/** Splits audio into chunks of at most ~28 s, cutting at the quietest moment near the end of each chunk. */
+/**
+ * Splits PCM into at most 28-second regions, choosing a cut in the 16-28 second
+ * range with the lowest 15-frame RMS sum. Regions whose peak is below the
+ * silence threshold are tagged for skip.
+ *
+ * RMS is measured in 20 ms frames to keep the O(audio length) search and
+ * model calls bounded. Cut indices remain on frame boundaries, then convert back
+ * to sample offsets for extraction.
+ */
 function segment(audio: Float32Array): { a: number; b: number; silent: boolean }[] {
   const n = Math.ceil(audio.length / FRAME);
   const rms = new Float32Array(n);
@@ -102,6 +130,14 @@ function segment(audio: Float32Array): { a: number; b: number; silent: boolean }
   });
 }
 
+/**
+ * Runs word-timestamp ASR for each non-silent segment in sequence.
+ *
+ * Model timestamps are segment-relative, so this adds the segment offset and
+ * clamps/repairs bounds before posting `RawWord`s in project time. Progress is
+ * weighted by non-silent sample count, not segment count. The entire request
+ * rejects through the worker message protocol on model or inference failure.
+ */
 async function run(req: CaptionRequest) {
   const asr = await load(req.model);
   const segs = segment(req.audio);
@@ -129,6 +165,10 @@ async function run(req: CaptionRequest) {
   post({ type: 'result', words });
 }
 
+/**
+ * Worker entry point. Non-run messages are ignored, and asynchronous failures
+ * are converted to a typed error message instead of escaping the worker.
+ */
 self.onmessage = (e: MessageEvent<CaptionRequest>) => {
   if (e.data?.type !== 'run') return;
   run(e.data).catch((err: unknown) => {

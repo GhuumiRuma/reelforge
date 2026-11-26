@@ -21,6 +21,10 @@ export function ExperimentalButton() {
   );
 }
 
+/**
+ * Portal-backed feature sheet that explains build isolation and renders the
+ * curated feature list; it never imports app behavior from individual flags.
+ */
 function ExperimentalSheet({ onClose }: { onClose: () => void }) {
   return (
     <Sheet title="Experimental features" onClose={onClose} tall closeIcon="x">
