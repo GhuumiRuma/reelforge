@@ -15,13 +15,15 @@ import {
   type VideoCodec,
   type WrappedCanvas,
 } from 'mediabunny';
-import type { Project, VideoItem } from '../types';
+import type { ImageItem, Project, VideoItem } from '../types';
+import { readBackgroundRemoval } from '../lib/background';
 import { acquireWakeLock } from '../lib/device';
 import { canvasSize, projectDuration } from '../lib/layout';
 import { getAsset, getBlob, getImage, getObjectUrl, loadAssets, loadVideoElement, makeCanvas, peekImage, seekElement } from '../lib/media';
 import { ensureFont } from '../lib/text';
 import { clamp, safeFileName } from '../lib/util';
 import { AudioMixer, canEncodeAac } from './audio';
+import { subjectMatte, subjectMatteKey, type BackgroundStatus } from './background';
 import { Compositor } from './gl';
 import { buildFrame, TextCache, type FrameProvider, type FrameSource } from './scene';
 
@@ -35,7 +37,7 @@ export interface ExportSettings {
 }
 
 export interface ExportProgress {
-  phase: 'prepare' | 'render' | 'finalize';
+  phase: 'prepare' | 'cutout' | 'render' | 'finalize';
   /** 0..1 */
   progress: number;
   /** seconds remaining, when known */
@@ -204,18 +206,24 @@ class ElementFrames implements SeqSource {
 class OfflineFrames implements FrameProvider {
   private sources = new Map<string, SeqSource>();
   private ready = new Map<string, FrameSource | null>();
+  private readyImages = new Map<string, FrameSource | null>();
   private requests = new Map<string, { item: VideoItem; st: number }>();
+  private imageRequests = new Map<string, ImageItem>();
   private recording = false;
 
-  constructor(private maxSide: number) {}
+  constructor(
+    private maxSide: number,
+    private options: { signal?: AbortSignal; onCutout?: (status: BackgroundStatus) => void } = {},
+  ) {}
 
   video(item: VideoItem, st: number): FrameSource | null {
     if (this.recording) this.requests.set(item.id, { item, st });
     return this.ready.get(item.id) ?? null;
   }
 
-  image(mediaId: string) {
-    return peekImage(mediaId);
+  image(item: ImageItem): FrameSource | null {
+    if (this.recording) this.imageRequests.set(item.id, item);
+    return this.readyImages.get(item.id) ?? (peekImage(item.mediaId) ? { source: peekImage(item.mediaId)!, version: 1 } : null);
   }
 
   private async source(item: VideoItem): Promise<SeqSource> {
@@ -232,6 +240,7 @@ class OfflineFrames implements FrameProvider {
   /** Dry-run the scene to learn which frames are needed, then decode them. */
   async prepare(p: Project, t: number, W: number, H: number, texts: TextCache) {
     this.requests.clear();
+    this.imageRequests.clear();
     this.recording = true;
     try {
       buildFrame(p, t, { W, H, asset: getAsset, provider: this, texts, seed: 0 });
@@ -251,7 +260,34 @@ class OfflineFrames implements FrameProvider {
         this.sources.set(item.id, src);
         f = await src.frameAt(st);
       }
+      if (f && readBackgroundRemoval(item).mode === 'subject') {
+        f = {
+          ...f,
+          matte: await subjectMatte(subjectMatteKey(item.mediaId, st), f.source, {
+            signal: this.options.signal,
+            onProgress: this.options.onCutout,
+          }),
+        };
+      }
       this.ready.set(item.id, f);
+    }
+    for (const item of this.imageRequests.values()) {
+      const source = peekImage(item.mediaId);
+      if (!source) {
+        this.readyImages.set(item.id, null);
+        continue;
+      }
+      let frame: FrameSource = { source, version: 1 };
+      if (readBackgroundRemoval(item).mode === 'subject') {
+        frame = {
+          ...frame,
+          matte: await subjectMatte(subjectMatteKey(item.mediaId, null), source, {
+            signal: this.options.signal,
+            onProgress: this.options.onCutout,
+          }),
+        };
+      }
+      this.readyImages.set(item.id, frame);
     }
     // Release decoders of clips that are finished.
     for (const [id, s] of this.sources) {
@@ -263,12 +299,17 @@ class OfflineFrames implements FrameProvider {
         this.ready.delete(id);
       }
     }
+    for (const id of this.readyImages.keys()) {
+      const it = [...p.main, ...p.overlays].find((x) => x.id === id);
+      if (!it || it.start + it.duration <= t) this.readyImages.delete(id);
+    }
   }
 
   dispose() {
     for (const s of this.sources.values()) s.dispose();
     this.sources.clear();
     this.ready.clear();
+    this.readyImages.clear();
   }
 }
 
@@ -331,7 +372,10 @@ export async function exportVideo(
   const canvas = makeCanvas(W, H);
   const comp = new Compositor(canvas, { preserve: true });
   const texts = new TextCache();
-  const frames = new OfflineFrames(Math.max(W, H));
+  const frames = new OfflineFrames(Math.max(W, H), {
+    signal,
+    onCutout: (status) => onProgress?.({ phase: 'cutout', progress: status.progress ?? 0, eta: null }),
+  });
   const mixer = acodec ? new AudioMixer(() => p, SAMPLE_RATE, 2) : null;
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: 'in-memory' }), target: new BufferTarget() });
   const video = new CanvasSource(canvas, {

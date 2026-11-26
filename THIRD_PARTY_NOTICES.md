@@ -103,12 +103,12 @@ Fonts marked OFL 1.1 are under the SIL Open Font License, Version 1.1, which is
 also at <http://scripts.sil.org/OFL>. Permanent Marker is under the Apache
 License 2.0. Both texts are under [License texts](#license-texts).
 
-## Speech recognition
+## On-device AI
 
-Captions are made on your device by OpenAI's Whisper speech models, which run on
-Transformers.js and ONNX Runtime Web. Transformers.js has two more Hugging Face
-packages built into its own code: `@huggingface/jinja` and
-`@huggingface/tokenizers`.
+Captions are made on your device by OpenAI's Whisper speech models. Automatic
+portrait cutouts use MODNet. Both run on Transformers.js and ONNX Runtime Web.
+Transformers.js has two more Hugging Face packages built into its own code:
+`@huggingface/jinja` and `@huggingface/tokenizers`.
 
 | Component | License | Copyright and source |
 | --- | --- | --- |
@@ -117,6 +117,7 @@ packages built into its own code: `@huggingface/jinja` and
 | `@huggingface/tokenizers` | Apache 2.0 | <https://github.com/huggingface/tokenizers.js/tree/v0.2.0> |
 | `onnxruntime-web`, `onnxruntime-common` | MIT | Copyright (c) Microsoft Corporation. <https://github.com/microsoft/onnxruntime> |
 | Whisper models | MIT | Copyright (c) 2022 OpenAI. <https://github.com/openai/whisper> |
+| MODNet model | Apache 2.0 | MODNet authors. <https://github.com/ZHKKKe/MODNet> |
 
 ONNX Runtime's WebAssembly binary builds on other third-party code, which ONNX
 Runtime lists in its notices:
@@ -128,6 +129,11 @@ your device downloads `onnx-community/whisper-tiny_timestamped` ("Fast") or
 are ONNX conversions of OpenAI's `openai/whisper-tiny` and
 `openai/whisper-base`. OpenAI releases Whisper's code and model weights under
 the MIT License, and Hugging Face lists the original models as Apache 2.0.
+
+The MODNet model is also not part of ReelForge. The first time automatic
+background removal is used, the device downloads `Xenova/modnet` from Hugging
+Face. It is an ONNX conversion of MODNet and runs entirely on the device; no
+input image or video is sent to Hugging Face.
 
 ## Other packages
 

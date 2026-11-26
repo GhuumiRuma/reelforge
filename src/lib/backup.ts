@@ -17,6 +17,7 @@
  * localStorage in the app and a plain object in the tests.
  */
 import { ASPECTS, type ClipFolder, type ClipMeta, type MediaAsset, type Project } from '../types';
+import { isBackgroundRemoval } from './background';
 import { projectMediaIds, type ClipRecord } from './db';
 
 export const BACKUP_EXTENSION = '.rfbackup';
@@ -337,7 +338,8 @@ function isClipMeta(v: unknown): v is ClipMeta {
     isNum(v.createdAt) &&
     optStr(v.source) &&
     optStr(v.youtubeId) &&
-    optStr(v.sourceUrl)
+    optStr(v.sourceUrl) &&
+    (v.backgroundRemoval === undefined || isBackgroundRemoval(v.backgroundRemoval))
   );
 }
 
@@ -348,6 +350,7 @@ const USES_MEDIA = ['video', 'image', 'audio'];
 function isItem(v: unknown): boolean {
   if (!isObj(v) || !isId(v.id) || !isStr(v.type) || !ITEM_TYPES.includes(v.type)) return false;
   if (!isNum(v.start) || !isNum(v.duration)) return false;
+  if (v.backgroundRemoval !== undefined && !isBackgroundRemoval(v.backgroundRemoval)) return false;
   return !USES_MEDIA.includes(v.type) || isId(v.mediaId);
 }
 

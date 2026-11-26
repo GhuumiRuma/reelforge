@@ -86,6 +86,16 @@ export interface Anim {
 export type Motion = 'none' | 'zoomIn' | 'zoomOut' | 'panLeft' | 'panRight' | 'panUp' | 'panDown';
 export type BlendMode = 'normal' | 'screen' | 'multiply' | 'add';
 export type MaskShape = 'none' | 'circle' | 'rounded';
+export type BackgroundRemovalMode = 'off' | 'color' | 'subject';
+
+export interface BackgroundRemoval {
+  mode: BackgroundRemovalMode;
+  color: string;
+  similarity: number;
+  smoothness: number;
+  /** Softness around the automatic subject matte, 0..0.49. */
+  feather: number;
+}
 
 export interface Crop {
   /** fractions of the source cut away from each side */
@@ -111,6 +121,9 @@ export interface Visual {
   keyframes: Keyframe[];
   blend: BlendMode;
   mask: { shape: MaskShape; radius: number; feather: number };
+  /** Optional for projects saved before background removal gained automatic cutouts. */
+  backgroundRemoval?: BackgroundRemoval;
+  /** Legacy color-key field retained for older projects and backups. */
   chroma: { enabled: boolean; color: string; similarity: number; smoothness: number };
 }
 
@@ -280,6 +293,8 @@ export interface ClipMeta {
   youtubeId?: string;
   /** TikTok or Instagram post link when it came from one */
   sourceUrl?: string;
+  /** Reapplies a background-removal choice when the saved clip enters an editor project. */
+  backgroundRemoval?: BackgroundRemoval;
   /** seconds into the source */
   start: number;
   end: number;

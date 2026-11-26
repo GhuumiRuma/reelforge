@@ -26,7 +26,7 @@ If Android says **App not installed** because the app **conflicts with an existi
 - **Text and stickers:** styled text presets, 12 fonts, outline, shadow, background, emoji stickers, and in and out animations.
 - **Auto-captions:** word-timed captions with karaoke-style highlighting, generated on the device, with SRT export.
 - **Audio:** music, voiceover recording, built-in sound effects, volume, fades and mute.
-- **Look:** 20 filters, 12 adjustments (brightness, contrast, saturation, warmth and more), crop, masks, blend modes, opacity and green screen.
+- **Look:** 20 filters, 12 adjustments (brightness, contrast, saturation, warmth and more), crop, masks, blend modes, opacity, green screen and automatic on-device subject cutouts.
 - **Motion:** 17 transitions, Ken Burns zoom and pan, and keyframes for position, scale, rotation and opacity.
 - **Layers:** picture-in-picture overlays, text and audio tracks.
 - **Export:** MP4 at up to 4K and 60 fps with a size estimate, then share straight to TikTok, Instagram or YouTube. You can also save a single frame as a thumbnail.
@@ -47,7 +47,8 @@ Tap **Clip studio** on the home screen to watch, search and clip on one screen.
 2. **Mark the clip.** Play the video and tap **Now** to set the start and end, or type the times. Tap **Play the clip** to check it.
 3. **Choose video or audio,** and pick a crop shape (9:16, 1:1, 4:5, 16:9 or free). Drag the box to move it; drag its corner to resize it.
 4. **YouTube videos** download first (Android app only): pick 360p, 720p or 1080p and tap **Download to crop and clip**. Your start and end stay marked.
-5. **Name it, pick a folder and tap Save.** Video clips are saved as MP4 and audio clips as .m4a (or .wav).
+5. **Choose Remove background** if needed: **Color** keys out green, blue or any picked color; **Auto** works best with a clearly separated person in portrait view. The automatic model downloads once, and the source file is never uploaded or changed.
+6. **Name it, pick a folder and tap Save.** Video clips are saved as MP4 and audio clips as .m4a (or .wav). Background-removal choices are restored when that clip is added to a ReelForge project.
 
 Saved clips appear under **Clips** on the home screen. There you can make folders, filter by video or audio, search, play, share, save to the device (Documents/ReelForge in the Android app), rename, move, delete, or open a clip in a new editing project. While you edit, the same clips are in **My clips** (see below).
 
@@ -67,7 +68,7 @@ The clip keeps its own sound, so move the soundbite or mute the clip if you hear
 2. **Save a piece.** Select a video or audio clip and tap **Save clip**. Name it and tap **Save**. It is saved between the clip's edges, so split and trim first to get just the bit you want.
 3. **Reuse it.** Tap **Media** or **Overlay** for video bits, or **Audio** for audio bits, then pick one under **My clips**. On the main track a video bit goes in at the clip edge nearest the playhead; as an overlay it goes in at the playhead. Audio bits go on the audio track at the playhead.
 
-Saved pieces are the same clips as under **Clips** on the home screen, so you can use them in any project. A saved piece is the original footage between the clip's edges. Speed, filters, volume and other changes you made to the clip are not included, and the toast tells you when speed was left out.
+Saved pieces are the same clips as under **Clips** on the home screen, so you can use them in any project. A saved piece is the original footage between the clip's edges. Its background-removal choice is kept, but speed, filters, volume and other changes are not included; the toast tells you when speed was left out.
 
 ## Back up and restore
 
@@ -82,7 +83,7 @@ A backup is never uploaded. It isn't encrypted either, so anyone who has the fil
 
 ## Privacy
 
-Projects, clips and media are stored in your browser's storage on this device and are never uploaded. Clearing the site's data or uninstalling the app deletes them, so save finished videos to your camera roll and [make a backup](#back-up-and-restore) of anything you want to keep.
+Projects, clips and media are stored in your browser's storage on this device and are never uploaded. The automatic cutout and caption models may download their weights, but neither receives nor sends your media. Clearing the site's data or uninstalling the app deletes your local data, so save finished videos to your camera roll and [make a backup](#back-up-and-restore) of anything you want to keep.
 
 ## Browser support
 

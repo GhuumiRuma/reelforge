@@ -150,6 +150,7 @@ export function Preview({ focus }: { focus: boolean }) {
         drawSel();
       },
       onRender: drawSel,
+      onBackgroundError: (message) => useEditor.getState().toast(message, 'error'),
     });
     engineRef.current = eng;
     setEngine(eng);

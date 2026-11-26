@@ -200,6 +200,14 @@ describe('writing a backup', () => {
     expect(opened.index.clips).toEqual([]);
   });
 
+  it('keeps a saved clip’s background removal choice', async () => {
+    const s = seeded();
+    const removal = { mode: 'subject' as const, color: '#00ff00', similarity: 0.4, smoothness: 0.08, feather: 0.2 };
+    s.clips.get('c1')!.meta.backgroundRemoval = removal;
+    const opened = await openBackup((await backUp(s)).blob);
+    expect(opened.index.clips.find((clip) => clip.meta.id === 'c1')?.meta.backgroundRemoval).toEqual(removal);
+  });
+
   it('counts files a project uses that are no longer on the phone', async () => {
     const s = seeded();
     s.media.delete('m3');

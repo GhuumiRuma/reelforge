@@ -1,4 +1,5 @@
-import type { AnimType, MainItem, MediaAsset, OverlayItem, Project, TextItem, VideoItem, VisualItem } from '../types';
+import type { AnimType, ImageItem, MainItem, MediaAsset, OverlayItem, Project, TextItem, VideoItem, VisualItem } from '../types';
+import { readBackgroundRemoval } from '../lib/background';
 import { activeMain, itemEnd, sampleKeyframes, sourceTime } from '../lib/layout';
 import { computeFx } from '../lib/filters';
 import { isFontReady, renderTextCanvas, textCharCount } from '../lib/text';
@@ -11,12 +12,13 @@ const DEG = Math.PI / 180;
 export interface FrameSource {
   source: TexImageSource;
   version: number | string;
+  matte?: { source: TexImageSource; version: number | string } | null;
 }
 
 export interface FrameProvider {
   /** Decoded frame of a video item at the given source time (seconds), or null if not ready. */
   video(item: VideoItem, sourceTime: number): FrameSource | null;
-  image(mediaId: string): TexImageSource | null;
+  image(item: ImageItem): FrameSource | null;
 }
 
 export interface SceneContext {
@@ -255,23 +257,43 @@ function baseSize(item: MainItem | OverlayItem, ctx: SceneContext): Base {
   return { w: sw * s, h: sh * s, uv: [x0, y0, x1, y1] };
 }
 
+interface ItemTexture {
+  ref: TexRef;
+  matte: TexRef | null;
+}
+
 /** undefined = media not ready yet; null = solid color */
-function itemTexture(item: MainItem | OverlayItem, t: number, ctx: SceneContext): TexRef | null | undefined {
+function itemTexture(item: MainItem | OverlayItem, t: number, ctx: SceneContext): ItemTexture | null | undefined {
   if (item.type === 'color') return null;
   if (item.type === 'image') {
-    const src = ctx.provider.image(item.mediaId);
-    return src ? { key: 'img:' + item.mediaId, source: src, version: 1, mip: true } : undefined;
+    const frame = ctx.provider.image(item);
+    return frame
+      ? {
+          ref: { key: 'img:' + item.mediaId, source: frame.source, version: frame.version, mip: true },
+          matte: frame.matte
+            ? { key: 'matte:img:' + item.mediaId, source: frame.matte.source, version: frame.matte.version }
+            : null,
+        }
+      : undefined;
   }
   const a = ctx.asset(item.mediaId);
   let st = sourceTime(item, t);
   if (a) st = clamp(st, 0, Math.max(0, a.duration - 0.001));
   const f = ctx.provider.video(item, st);
-  return f ? { key: 'vid:' + item.id, source: f.source, version: f.version } : undefined;
+  return f
+    ? {
+        ref: { key: 'vid:' + item.id, source: f.source, version: f.version },
+        matte: f.matte
+          ? { key: 'matte:vid:' + item.id, source: f.matte.source, version: f.matte.version }
+          : null,
+      }
+    : undefined;
 }
 
-function makeLayer(item: MainItem | OverlayItem, pose: Pose, base: Base, ctx: SceneContext, tex: TexRef | null, overlay: boolean): DrawLayer {
+function makeLayer(item: MainItem | OverlayItem, pose: Pose, base: Base, ctx: SceneContext, tex: ItemTexture | null, overlay: boolean): DrawLayer {
+  const removal = readBackgroundRemoval(item);
   return {
-    tex,
+    tex: tex?.ref ?? null,
     color: item.type === 'color' ? hexToRgb(item.color) : [0, 0, 0],
     cx: ctx.W / 2 + pose.x * ctx.W,
     cy: ctx.H / 2 + pose.y * ctx.H,
@@ -284,8 +306,12 @@ function makeLayer(item: MainItem | OverlayItem, pose: Pose, base: Base, ctx: Sc
     fx: computeFx(item),
     mask: item.mask.shape !== 'none' ? { ...item.mask } : null,
     chroma:
-      item.chroma.enabled && item.type !== 'color'
-        ? { color: hexToRgb(item.chroma.color), similarity: item.chroma.similarity, smoothness: item.chroma.smoothness }
+      removal.mode === 'color' && item.type !== 'color'
+        ? { color: hexToRgb(removal.color), similarity: removal.similarity, smoothness: removal.smoothness }
+        : null,
+    cutout:
+      removal.mode === 'subject' && item.type !== 'color'
+        ? { matte: tex?.matte ?? null, feather: removal.feather }
         : null,
   };
 }
@@ -293,7 +319,7 @@ function makeLayer(item: MainItem | OverlayItem, pose: Pose, base: Base, ctx: Sc
 function covers(L: DrawLayer, W: number, H: number): boolean {
   const deg = (((L.rot / DEG) % 360) + 360) % 360;
   if (deg > 0.01 && deg < 359.99) return false;
-  if (L.opacity < 0.999 || L.mask || L.chroma) return false;
+  if (L.opacity < 0.999 || L.mask || L.chroma || L.cutout) return false;
   const hw = Math.abs(L.w) / 2;
   const hh = Math.abs(L.h) / 2;
   return L.cx - hw <= 0.5 && L.cx + hw >= W - 0.5 && L.cy - hh <= 0.5 && L.cy + hh >= H - 0.5;
@@ -349,6 +375,7 @@ function mainPage(item: MainItem, t: number, p: Project, ctx: SceneContext, quad
         rot: 0,
         mask: null,
         chroma: null,
+        cutout: null,
       },
     };
   }
@@ -384,6 +411,7 @@ function textLayer(item: TextItem, t: number, ctx: SceneContext, quads: HitQuad[
     fx: null,
     mask: null,
     chroma: null,
+    cutout: null,
   };
   quads.push(restQuad(item.id, 'texts', item, t, L, r.w, r.h, ctx));
   return L;

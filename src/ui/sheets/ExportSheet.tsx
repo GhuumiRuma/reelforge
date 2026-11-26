@@ -36,6 +36,7 @@ const QUALITY_OPTIONS: { value: ExportQuality; label: string }[] = [
 
 const PHASES: Record<ExportProgress['phase'], string> = {
   prepare: 'Getting ready…',
+  cutout: 'Removing backgrounds…',
   render: 'Saving your video…',
   finalize: 'Finishing up…',
 };
@@ -198,7 +199,7 @@ export function ExportSheet({ onClose, autoStart }: { onClose: () => void; autoS
           <div className="big-value" aria-hidden>
             {Math.floor(e.progress * 100)}%
           </div>
-          <Progress value={e.phase === 'prepare' ? null : e.progress} label="Saving progress" />
+          <Progress value={e.phase === 'prepare' || e.phase === 'cutout' ? null : e.progress} label="Saving progress" />
           <p className="note tnum">{e.phase === 'render' ? formatEta(e.eta) : '\u00a0'}</p>
           <p className="note">Keep ReelForge open with the screen on until it’s done.</p>
           <button className="secondary-btn block" onClick={cancel}>
