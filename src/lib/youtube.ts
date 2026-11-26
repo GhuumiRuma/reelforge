@@ -9,6 +9,7 @@
 import type { Types } from 'youtubei.js/agnostic';
 import { anyFetch, isNative } from './native';
 
+/** Search/details metadata normalized from youtubei.js into app-safe plain data. */
 export interface YtVideo {
   id: string;
   title: string;
@@ -19,15 +20,25 @@ export interface YtVideo {
   live?: boolean;
 }
 
+/** Expected connection, playability, or format failure whose message is suitable for UI. */
 export class YouTubeError extends Error {}
 
+/** Indicates that native networking required by search/download is available. */
 export const canUseYouTubeApi = (): boolean => isNative();
 
 type Yt = import('youtubei.js/agnostic').Innertube;
 type FormatT = import('youtubei.js/agnostic').Misc.Format;
 
+/** Shared lazy Innertube session; reset after initialization failure so the next action can retry. */
 let ytp: Promise<Yt> | null = null;
 
+/**
+ * Creates or returns the Android-only YouTube client.
+ *
+ * `youtubei.js` supplies page/session state and format deciphering, while `anyFetch` performs
+ * requests through Capacitor. Player-evaluation code is redirected to the sandbox iframe. A
+ * failed session is not cached, and browser callers receive an explicit unsupported error.
+ */
 function innertube(): Promise<Yt> {
   if (!canUseYouTubeApi()) return Promise.reject(new YouTubeError('Searching and downloading from YouTube works in the Android app.'));
   ytp ??= (async () => {
@@ -53,8 +64,11 @@ function innertube(): Promise<Yt> {
 // ---------------------------------------------------------------------------
 // Running YouTube's player code
 
+/** Hidden sandbox used only for evaluating YouTube's returned player signatures. */
 let frame: HTMLIFrameElement | null = null;
+/** First-load promise that serializes creation of the signature sandbox. */
 let frameReady: Promise<HTMLIFrameElement> | null = null;
+/** Per-message identifier preventing unrelated iframe messages from satisfying a request. */
 let seq = 0;
 
 /**
@@ -96,6 +110,7 @@ function sandboxEval(code: string): Promise<Record<string, unknown>> {
 // ---------------------------------------------------------------------------
 // Search
 
+/** Partial youtubei.js result shape used by the adapter after runtime type filtering. */
 interface VideoNodeLike {
   type: string;
   video_id?: string;
@@ -107,6 +122,12 @@ interface VideoNodeLike {
   is_live?: boolean;
 }
 
+/**
+ * Searches YouTube videos through the native-only Innertube session.
+ *
+ * Non-video result nodes are ignored, IDs/title/channel/duration are normalized, and the smallest
+ * thumbnail at least 320px wide is selected to reduce device/network cost.
+ */
 export async function searchYouTube(query: string): Promise<YtVideo[]> {
   const yt = await innertube();
   const res = await yt.search(query, { type: 'video' });
@@ -136,10 +157,14 @@ export async function searchYouTube(query: string): Promise<YtVideo[]> {
  * token, but not for videos made for kids, which the YouTube Kids client gets. IOS and MWEB finish
  * only some videos; for the rest YouTube sends the start and then refuses.
  */
+/** Compatibility client order used until one can resolve and finish the requested stream. */
 const CLIENTS: Types.InnerTubeClient[] = ['VISIONOS', 'YTKIDS', 'IOS', 'MWEB'];
+/** Byte range size for mobile-friendly progress and retry boundaries. */
 const CHUNK = 8 * 1024 * 1024;
+/** Prefix/suffix size used to detect clients that expose only an initial non-downloadable fragment. */
 const PROBE = 1024;
 
+/** Requested output kind, quality ceiling, cancellation, and progress reporting. */
 export interface DownloadOptions {
   kind: 'video' | 'audio';
   /** largest picture height to download */
@@ -148,6 +173,7 @@ export interface DownloadOptions {
   onProgress?: (fraction: number, label: string) => void;
 }
 
+/** Download result, with separate picture/sound blobs when an adaptive stream pair was selected. */
 export interface Downloaded {
   /** a picture-only file, a sound-only file, or one file with both */
   video: Blob | null;
@@ -157,6 +183,7 @@ export interface Downloaded {
   duration: number;
 }
 
+/** Formats chosen for a download and whether the returned video is already muxed with sound. */
 interface Pick {
   video: FormatT | null;
   audio: FormatT | null;
@@ -164,6 +191,12 @@ interface Pick {
   muxed: boolean;
 }
 
+/**
+ * Selects the most compatible streams for the requested output.
+ *
+ * Audio output prefers an adaptive M4A stream. Video output prefers AVC/H.264 MP4 plus M4A and
+ * falls back to a muxed MP4 when a separate pair cannot be completed.
+ */
 function pickFormats(adaptive: FormatT[], muxed: FormatT[], o: DownloadOptions): Pick | null {
   const audios = adaptive
     .filter((f) => f.has_audio && !f.has_video)
@@ -203,6 +236,12 @@ async function refusal(url: string, length: number | undefined, signal?: AbortSi
   return null;
 }
 
+/**
+ * Downloads one deciphered stream in retryable byte ranges.
+ *
+ * Network failures are retried per range; cancellation and a server refusal are propagated.
+ * The blob remains on the device and receives a stripped MIME type suitable for import/probing.
+ */
 async function fetchStream(url: string, total: number | undefined, mime: string, o: DownloadOptions, step: (got: number) => void): Promise<Blob> {
   const parts: Blob[] = [];
   let got = 0;
@@ -230,7 +269,14 @@ async function fetchStream(url: string, total: number | undefined, mime: string,
   return new Blob(parts, { type: mime.split(';')[0] });
 }
 
-/** Downloads a YouTube video (or just its sound) at up to `maxHeight` lines. */
+/**
+ * Downloads a YouTube video (or only its sound) using the first client that can finish.
+ *
+ * Client/session playability, format selection, URL deciphering, prefix/suffix refusal probes,
+ * and byte-range download each happen on the Android network adapter. Adaptive picture/sound may
+ * be returned separately for the caller to mux; errors preserve the most useful bot-check,
+ * download refusal, or playability reason. Cancellation propagates without trying later clients.
+ */
 export async function downloadYouTube(id: string, o: DownloadOptions): Promise<Downloaded> {
   const yt = await innertube();
   // Why it failed, most useful first: YouTube's bot check, then the first client that offered the video
@@ -301,7 +347,11 @@ export async function downloadYouTube(id: string, o: DownloadOptions): Promise<D
   );
 }
 
-/** Video title and length without downloading, for links opened in the app. */
+/**
+ * Retrieves video title/channel/duration without downloading stream bytes.
+ * Browser builds resolve `null`, and Android metadata errors are logged then also become `null` so
+ * opening a link can still fall back to its ID/player.
+ */
 export async function youTubeDetails(id: string): Promise<YtVideo | null> {
   if (!canUseYouTubeApi()) return null;
   try {

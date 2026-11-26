@@ -1,3 +1,8 @@
+/**
+ * Clip studio route. It resolves device/local/YouTube/social sources into a local
+ * playable file, lets the user mark a range and crop, and encodes that source into
+ * the reusable clip library without modifying the downloaded source itself.
+ */
 import {
   ArrowLeft,
   ClipboardPaste,
@@ -86,6 +91,11 @@ interface Busy {
   ctl: AbortController;
 }
 
+/**
+ * Coordinates source discovery, asynchronous downloads, crop/range controls, and
+ * library saving. Busy work is cancellable and owns a wake lock; source replacement
+ * revokes old object URLs, while saved preferences survive only between visits.
+ */
 export function Studio() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<YtVideo[] | null>(null);
@@ -134,6 +144,7 @@ export function Studio() {
   const effectiveKind = isFile && !canRedownload ? (!source.hasVideo ? 'audio' : !source.hasAudio ? 'video' : kind) : kind;
   const fixed = aspectRatio(aspect);
 
+  /** Resets crop, removal, name, feedback, and the suggested ten-second range for a source. */
   const resetFor = (dur: number, start = 0) => {
     const s = clamp(start, 0, Math.max(0, dur - 0.1));
     setTimes({ start: formatClock(s), end: formatClock(dur > 0 ? Math.min(dur, s + SUGGESTED_LENGTH) : s + SUGGESTED_LENGTH) });
@@ -145,6 +156,10 @@ export function Studio() {
     setError(null);
   };
 
+  /**
+   * Replaces the source with an embedded YouTube player and, when search metadata
+   * lacked duration, fills its title/channel/duration without overwriting a newer source.
+   */
   const openYouTube = (v: { id: string; title: string; channel: string; duration: number }, start = 0) => {
     busy?.ctl.abort();
     setSource({ type: 'youtube', ...v, start });
@@ -159,6 +174,10 @@ export function Studio() {
     }
   };
 
+  /**
+   * Probes a blob for dimensions/streams, installs an owned object URL, and either
+   * preserves the current range for a quality re-download or resets source controls.
+   */
   const openFile = async (
     blob: Blob,
     title: string,
@@ -193,6 +212,7 @@ export function Studio() {
     }
   };
 
+  /** Opens a local video/audio picker synchronously from the user gesture. */
   const fromDevice = () => {
     // The picker has to open synchronously inside the tap.
     void pickFiles('video/*,audio/*', false).then((files) => {
@@ -201,6 +221,10 @@ export function Studio() {
     });
   };
 
+  /**
+   * Dispatches a submitted value to YouTube ID/start parsing, social download, direct
+   * media fetch, or native YouTube search and reports unsupported/browser cases.
+   */
   const submit = async (e?: FormEvent, text = query) => {
     e?.preventDefault();
     const q = text.trim();
@@ -244,6 +268,7 @@ export function Studio() {
     }
   };
 
+  /** Fetches a directly addressable media URL through the native/browser bridge. */
   const fetchLink = async (url: string) => {
     const ctl = new AbortController();
     setBusy({ label: 'Downloading', progress: null, ctl });
@@ -267,6 +292,7 @@ export function Studio() {
   };
 
   /** Downloads a TikTok or Instagram video so it can be clipped. */
+  /** Downloads a supported TikTok/Instagram post with progress and cooperative cancel. */
   const downloadLink = async (link: SocialLink) => {
     busy?.ctl.abort();
     const ctl = new AbortController();
@@ -294,6 +320,7 @@ export function Studio() {
     }
   };
 
+  /** Reads clipboard text in response to a tap, then feeds it through normal submit routing. */
   const paste = async () => {
     try {
       const text = (await navigator.clipboard.readText()).trim();
@@ -306,6 +333,10 @@ export function Studio() {
   };
 
   /** Downloads the YouTube video so it can be cropped and saved. */
+  /**
+   * Downloads the selected YouTube stream variant, joins separate picture/sound when
+   * necessary, and reopens the result as a local crop-able file while retaining times.
+   */
   const download = async () => {
     if (source?.type !== 'youtube' && !(source?.type === 'file' && source.youtubeId)) return;
     const id = source.type === 'youtube' ? source.id : source.youtubeId!;
@@ -342,12 +373,14 @@ export function Studio() {
     }
   };
 
+  /** Copies the player's current time into one of the text range fields. */
   const markNow = (field: 'start' | 'end') => {
     const t = playerRef.current?.time() ?? 0;
     setTimes((s) => ({ ...s, [field]: formatClock(Math.round(t * 10) / 10) }));
     haptic('light');
   };
 
+  /** Selects a crop shape and derives a centered/full normalized crop for local media. */
   const pickAspect = (a: CropAspect) => {
     setAspect(a);
     if (source?.type !== 'file') return;
@@ -356,6 +389,7 @@ export function Studio() {
     else setCrop(cropForAspect(source.width, source.height, aspectRatio(a)));
   };
 
+  /** Updates the saved folder preference, prompting to create a folder when selected. */
   const chooseFolder = async (value: string) => {
     if (value !== '__new') {
       setPrefs((p) => ({ ...p, folderId: value || null }));
@@ -369,11 +403,16 @@ export function Studio() {
     setPrefs((p) => ({ ...p, folderId: f.id }));
   };
 
+  /** Builds the source/time-stamped filename suggested for a valid save range. */
   const defaultName = () => {
     if (!source || !check?.ok) return '';
     return `${safeFileName(source.title, 'Clip')} ${timeStamp(check.start)}-${timeStamp(check.end)}`;
   };
 
+  /**
+   * Encodes the checked time range and optional crop, creates poster/metadata, stores
+   * a unique library record, and exposes quota/encoding failures without losing input.
+   */
   const save = async () => {
     if (source?.type !== 'file' || !check?.ok || busy) return;
     const ctl = new AbortController();
@@ -783,8 +822,11 @@ export function Studio() {
 // Players
 
 interface PlayerHandle {
+  /** Reads the embedded player's current source time in seconds. */
   time(): number;
+  /** Pauses preview without changing the marked range. */
   pause(): void;
+  /** Starts at `start` and stops playback once `end` is crossed. */
   playRange(start: number, end: number): void;
 }
 
@@ -797,8 +839,10 @@ function YouTubePlayer({ id, start, handle }: { id: string; start: number; handl
   const stopAt = useRef<number | null>(null);
 
   useEffect(() => {
+    /** Sends one command with the privacy-enhanced YouTube origin as the target. */
     const post = (func: string, args: unknown[] = []) =>
       ref.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args }), YT_ORIGIN);
+    /** Accepts only expected-origin, matching-player messages and enforces range end. */
     const onMsg = (e: MessageEvent) => {
       if (e.origin !== YT_ORIGIN || e.source !== ref.current?.contentWindow) return;
       let data: { event?: string; info?: { currentTime?: number } } | null = null;
@@ -832,6 +876,7 @@ function YouTubePlayer({ id, start, handle }: { id: string; start: number; handl
     };
   }, [handle]);
 
+  /** Subscribes this iframe to info delivery so range playback can observe its clock. */
   const listen = () => ref.current?.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), YT_ORIGIN);
   const params = new URLSearchParams({ enablejsapi: '1', playsinline: '1', rel: '0', origin: location.origin, widget_referrer: location.origin });
   if (start > 0) params.set('start', String(Math.floor(start)));
@@ -859,6 +904,10 @@ interface FileSrc {
   hasVideo: boolean;
 }
 
+/**
+ * Native local-media player with fit-to-stage sizing, range playback, scrubbing,
+ * and pointer crop movement. It publishes the same imperative handle as YouTube.
+ */
 function FilePlayer({
   src,
   crop,
@@ -904,6 +953,7 @@ function FilePlayer({
   useLayoutEffect(() => {
     const el = stage.current;
     if (!el) return;
+    /** Fits the media's source aspect inside the measured stage for aligned crop controls. */
     const fit = () => {
       const r = el.getBoundingClientRect();
       const ar = src.hasVideo && src.width && src.height ? src.width / src.height : 16 / 9;
@@ -916,6 +966,7 @@ function FilePlayer({
     return () => ro.disconnect();
   }, [src]);
 
+  /** Publishes clock updates and stops preview exactly when the requested range ends. */
   const onTime = () => {
     const v = video.current;
     if (!v) return;
@@ -926,6 +977,7 @@ function FilePlayer({
     }
   };
 
+  /** Toggles unrestricted user playback and cancels any prior range stop. */
   const toggle = () => {
     const v = video.current;
     if (!v) return;
@@ -934,6 +986,7 @@ function FilePlayer({
     else v.pause();
   };
 
+  /** Captures a crop-box or corner pointer and retains normalized drag-start geometry. */
   const down = (mode: 'move' | 'size') => (e: ReactPointerEvent) => {
     if (!crop) return;
     e.stopPropagation();
@@ -941,6 +994,7 @@ function FilePlayer({
     drag.current = { mode, x: e.clientX, y: e.clientY, from: crop, id: e.pointerId };
     setDragging(true);
   };
+  /** Converts CSS movement into normalized crop movement or ratio-constrained resizing. */
   const move = (e: ReactPointerEvent) => {
     const d = drag.current;
     if (!d || d.id !== e.pointerId || !box.w) return;
@@ -948,12 +1002,14 @@ function FilePlayer({
     const dy = (e.clientY - d.y) / box.h;
     onCrop(d.mode === 'move' ? moveCrop(d.from, dx, dy) : resizeCrop(d.from, dx, dy, ratio, src.width, src.height));
   };
+  /** Ends crop interaction only for the pointer that owns the current drag. */
   const up = (e: ReactPointerEvent) => {
     if (drag.current?.id !== e.pointerId) return;
     drag.current = null;
     setDragging(false);
   };
 
+  /** Converts normalized crop/range values to CSS percentages. */
   const pct = (v: number) => `${v * 100}%`;
   const dur = src.duration || 0;
 

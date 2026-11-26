@@ -1,3 +1,11 @@
+/**
+ * Runtime media registry, probing, decoding, derived caches, and frame capture.
+ *
+ * IndexedDB is the durable source for asset bytes. In-memory metadata, blobs, object URLs, decoded
+ * images, thumbnails, and waveforms reduce repeated I/O, while a serial decode queue avoids multiple
+ * expensive jobs on constrained phones. WebCodecs paths fall back to media elements/Web Audio when
+ * a codec or container is not supported.
+ */
 import { ALL_FORMATS, AudioBufferSink, BlobSource, CanvasSink, Input } from 'mediabunny';
 import type { MediaAsset, MediaKind } from '../types';
 import { getMedia, getPeaks, getThumbs, putMedia, putPeaks, putThumbs, type PeakRecord } from './db';
@@ -6,19 +14,28 @@ import { clamp, uid } from './util';
 /** Fires `update` with `detail = assetId` whenever thumbnails or waveforms become available. */
 export const mediaEvents = new EventTarget();
 
+/** Session metadata cache, keyed by stable asset ID. */
 const assets = new Map<string, MediaAsset>();
+/** Session source-blob cache used to avoid repeated IndexedDB reads. */
 const blobs = new Map<string, Blob>();
+/** Session object-URL cache; URLs stay private to the current origin and process. */
 const urls = new Map<string, string>();
 
+/** Registers metadata and optional bytes for fast synchronous/deduplicated later lookups. */
 export function registerAsset(asset: MediaAsset, blob?: Blob) {
   assets.set(asset.id, asset);
   if (blob) blobs.set(asset.id, blob);
 }
 
+/** Returns cached metadata without performing persistence or network I/O. */
 export function getAsset(id: string): MediaAsset | undefined {
   return assets.get(id);
 }
 
+/**
+ * Loads missing records from IndexedDB for a list of IDs.
+ * Results omit records that no longer exist and reuse session-cached metadata where possible.
+ */
 export async function loadAssets(ids: string[]): Promise<Record<string, MediaAsset>> {
   const out: Record<string, MediaAsset> = {};
   for (const id of ids) {
@@ -35,6 +52,10 @@ export async function loadAssets(ids: string[]): Promise<Record<string, MediaAss
   return out;
 }
 
+/**
+ * Resolves a source blob from memory or IndexedDB.
+ * A missing/deleted ID returns `null`; successful disk reads populate both session caches.
+ */
 export async function getBlob(id: string): Promise<Blob | null> {
   const b = blobs.get(id);
   if (b) return b;
@@ -44,6 +65,10 @@ export async function getBlob(id: string): Promise<Blob | null> {
   return rec.blob;
 }
 
+/**
+ * Gets or creates the stable session object URL for a source blob.
+ * This never uploads data; a missing media ID resolves to `null`.
+ */
 export async function getObjectUrl(id: string): Promise<string | null> {
   const u = urls.get(id);
   if (u) return u;
@@ -72,6 +97,10 @@ export function peekObjectUrl(id: string): string | null {
   return url;
 }
 
+/**
+ * Infers a supported media kind from MIME type, then from the filename extension when needed.
+ * Unknown media returns `null` for the import caller to turn into a user-facing error.
+ */
 export function kindOf(type: string, name: string): MediaKind | null {
   if (type.startsWith('video/')) return 'video';
   if (type.startsWith('image/')) return 'image';
@@ -83,6 +112,7 @@ export function kindOf(type: string, name: string): MediaKind | null {
   return null;
 }
 
+/** Codec/container facts normalized by the Mediabunny and HTML-element probing paths. */
 interface ProbeInfo {
   duration: number;
   width: number;
@@ -93,6 +123,10 @@ interface ProbeInfo {
   canDecodeAudio: boolean;
 }
 
+/**
+ * Probes tracks and duration with Mediabunny and reports WebCodecs decode capability.
+ * The parser is disposed after success or failure.
+ */
 async function probeMediabunny(blob: Blob): Promise<ProbeInfo> {
   const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(blob) });
   try {
@@ -114,6 +148,10 @@ async function probeMediabunny(blob: Blob): Promise<ProbeInfo> {
   }
 }
 
+/**
+ * Fallback metadata probe using a muted audio/video element and a temporary object URL.
+ * It reports conservative decode flags; loading or codec errors reject as unsupported media.
+ */
 function probeElement(blob: Blob, kind: MediaKind): Promise<ProbeInfo> {
   return new Promise((resolve, reject) => {
     const el = document.createElement(kind === 'audio' ? 'audio' : 'video') as HTMLVideoElement;
@@ -142,6 +180,12 @@ function probeElement(blob: Blob, kind: MediaKind): Promise<ProbeInfo> {
   });
 }
 
+/**
+ * Creates durable metadata from a local blob without modifying its bytes.
+ *
+ * Images use `ImageBitmap`; timed media tries Mediabunny first and an HTML media element second.
+ * Unsupported kinds, undecodable images, and zero-duration timed media reject with UI-ready errors.
+ */
 export async function probe(blob: Blob, name: string, type: string): Promise<MediaAsset> {
   const kind = kindOf(type, name);
   if (!kind) throw new Error('Unsupported file type');
@@ -184,6 +228,12 @@ export async function probe(blob: Blob, name: string, type: string): Promise<Med
   };
 }
 
+/**
+ * Sequentially probes, persists, and registers a batch of local files.
+ *
+ * One bad file does not abort the remaining imports. Successful assets schedule thumbnail and
+ * waveform work in the background, while `errors` preserves each source filename and reason.
+ */
 export async function importFiles(
   files: File[] | Blob[],
   onProgress?: (done: number, total: number, name: string) => void,
@@ -212,7 +262,10 @@ export async function importFiles(
 // ---------------------------------------------------------------------------
 // Background work queue (one decode job at a time keeps phones responsive)
 
+/** Tail of the one-at-a-time decode queue; failures are recorded then the queue remains usable. */
 let queue: Promise<unknown> = Promise.resolve();
+
+/** Runs an expensive job after prior decode work while allowing subsequent work after rejection. */
 function enqueue<T>(job: () => Promise<T>): Promise<T> {
   const run = queue.then(job, job);
   queue = run.catch(() => undefined);
@@ -222,6 +275,7 @@ function enqueue<T>(job: () => Promise<T>): Promise<T> {
 // ---------------------------------------------------------------------------
 // Canvas helpers
 
+/** Allocates an on-page canvas with the requested explicit pixel dimensions. */
 export function makeCanvas(w: number, h: number): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = w;
@@ -229,11 +283,16 @@ export function makeCanvas(w: number, h: number): HTMLCanvasElement {
   return c;
 }
 
+/**
+ * Encodes an HTML or Offscreen canvas as a blob.
+ * Offscreen conversion is direct; a null `toBlob` result becomes a rejected promise.
+ */
 export function canvasToBlob(c: HTMLCanvasElement | OffscreenCanvas, type = 'image/jpeg', q = 0.75): Promise<Blob> {
   if ('convertToBlob' in c) return c.convertToBlob({ type, quality: q });
   return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('toBlob failed'))), type, q));
 }
 
+/** Draws a source with centered CSS-style cover behavior into a square thumbnail canvas. */
 function drawCover(ctx: CanvasRenderingContext2D, src: CanvasImageSource, sw: number, sh: number, size: number) {
   const s = Math.max(size / sw, size / sh);
   const w = sw * s;
@@ -241,6 +300,12 @@ function drawCover(ctx: CanvasRenderingContext2D, src: CanvasImageSource, sw: nu
   ctx.drawImage(src, (size - w) / 2, (size - h) / 2, w, h);
 }
 
+/**
+ * Loads a muted/inlined HTML video far enough to decode frames, resolving after data or an 8s cap.
+ *
+ * A play/pause probe helps metadata-only browser implementations. Errors reject, and callers own
+ * cleanup of the URL and element when finished.
+ */
 export function loadVideoElement(url: string): Promise<HTMLVideoElement> {
   return new Promise((resolve, reject) => {
     const v = document.createElement('video');
@@ -270,6 +335,10 @@ export function loadVideoElement(url: string): Promise<HTMLVideoElement> {
   });
 }
 
+/**
+ * Seeks a loaded media element, resolving on `seeked` or after a 3s best-effort timeout.
+ * Already-ready near-identical times return immediately.
+ */
 export function seekElement(v: HTMLVideoElement, t: number): Promise<void> {
   return new Promise((resolve) => {
     if (Math.abs(v.currentTime - t) < 0.001 && v.readyState >= 2) return resolve();
@@ -287,11 +356,21 @@ export function seekElement(v: HTMLVideoElement, t: number): Promise<void> {
 // ---------------------------------------------------------------------------
 // Images
 
+/** Decoded image representation retained for renderer texture upload. */
 type DecodedImage = ImageBitmap | HTMLCanvasElement;
+/** In-flight decoded-image jobs, allowing simultaneous consumers to share one decode. */
 const imageCache = new Map<string, Promise<DecodedImage>>();
+/** Successfully decoded images, used by synchronous renderer peeks. */
 const imageValues = new Map<string, DecodedImage>();
+/** Conservative maximum dimension used when downsizing images for GPU compatibility. */
 const MAX_IMAGE = 4096;
 
+/**
+ * Decodes and caches an image by media ID.
+ *
+ * Premultiplied alpha is requested for WebGL consistency. Images larger than 4096 are downscaled
+ * to a canvas, and failures are removed from the promise cache so a later call can retry.
+ */
 export function getImage(id: string): Promise<DecodedImage> {
   let p = imageCache.get(id);
   if (!p) {
@@ -330,19 +409,30 @@ export function peekImage(id: string): DecodedImage | null {
 // ---------------------------------------------------------------------------
 // Thumbnails
 
+/** In-memory timeline thumbnail set and its real-time spacing. */
 export interface ThumbStrip {
   interval: number;
   images: (ImageBitmap | null)[];
 }
 
+/** Pixel edge of each cover-cropped timeline thumbnail. */
 const THUMB = 96;
+/** Decoded thumbnail strips ready for synchronous UI reads. */
 const thumbMem = new Map<string, ThumbStrip>();
+/** One in-flight/persisted-thumbnail job per media ID. */
 const thumbJobs = new Map<string, Promise<void>>();
 
+/** Returns a decoded thumbnail strip if generation/loading has completed. */
 export function getThumbStrip(id: string): ThumbStrip | null {
   return thumbMem.get(id) ?? null;
 }
 
+/**
+ * Loads or generates and persists the thumbnail strip for a visual asset.
+ *
+ * IndexedDB is checked first. New jobs use the serial queue, and individual corrupt thumbnail
+ * frames decode to `null` rather than discarding the whole strip. Background failures only warn.
+ */
 export function ensureThumbs(id: string): Promise<void> {
   let job = thumbJobs.get(id);
   if (!job) {
@@ -364,6 +454,12 @@ export function ensureThumbs(id: string): Promise<void> {
   return job;
 }
 
+/**
+ * Generates an evenly sampled, cover-cropped strip for an image or video.
+ *
+ * Images produce one long-interval frame. Videos prefer WebCodecs CanvasSink and fall back to
+ * element seeking. Temporary URLs/parsers are cleaned up in `finally` blocks.
+ */
 async function generateThumbs(asset: MediaAsset, blob: Blob) {
   const c = makeCanvas(THUMB, THUMB);
   const ctx = c.getContext('2d')!;
@@ -416,14 +512,24 @@ async function generateThumbs(asset: MediaAsset, blob: Blob) {
 // ---------------------------------------------------------------------------
 // Waveform peaks
 
+/** Waveform samples retained per second of source audio. */
 export const PEAK_RATE = 50;
+/** Completed waveform records available to synchronous timeline rendering. */
 const peakMem = new Map<string, PeakRecord>();
+/** One waveform load/generation job per source asset. */
 const peakJobs = new Map<string, Promise<void>>();
 
+/** Returns the cached waveform record if it has finished loading or generation. */
 export function getPeaksSync(id: string): PeakRecord | null {
   return peakMem.get(id) ?? null;
 }
 
+/**
+ * Loads or computes persistent normalized waveform data for an audio-bearing asset.
+ *
+ * Derived records are stored in IndexedDB after generation, and completion emits a `mediaEvents`
+ * update. Failures warn and remain best-effort so media remains usable without a waveform.
+ */
 export function ensurePeaks(id: string): Promise<void> {
   let job = peakJobs.get(id);
   if (!job) {
@@ -444,6 +550,12 @@ export function ensurePeaks(id: string): Promise<void> {
   return job;
 }
 
+/**
+ * Adds absolute samples from an AudioBuffer to 50 Hz peak bins.
+ *
+ * Stereo is represented by the maximum of the first two channels; every third sample is inspected
+ * as a bounded CPU-saving approximation. Later buffers update only bins later in time.
+ */
 function accumulate(data: Float32Array, buf: AudioBuffer, timestamp: number) {
   const ch0 = buf.getChannelData(0);
   const ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
@@ -457,6 +569,12 @@ function accumulate(data: Float32Array, buf: AudioBuffer, timestamp: number) {
   }
 }
 
+/**
+ * Generates a normalized byte waveform from audio samples.
+ *
+ * WebCodecs/Mediabunny streaming decode is preferred, with full Web Audio decoding as fallback.
+ * Square-root normalization is applied after global peak scaling for useful visual dynamics.
+ */
 async function generatePeaks(asset: MediaAsset, blob: Blob): Promise<PeakRecord> {
   const data = new Float32Array(Math.ceil(asset.duration * PEAK_RATE) + 1);
   let ok = false;
@@ -487,6 +605,12 @@ async function generatePeaks(asset: MediaAsset, blob: Blob): Promise<PeakRecord>
   return { id: asset.id, rate: PEAK_RATE, data: u8 };
 }
 
+/**
+ * Decodes a complete audio/video blob into PCM with the browser's offline Web Audio API.
+ *
+ * This compatibility fallback loads the whole file into memory and supports both the standard and
+ * older prefixed iOS context. Decode errors reject to the derived-cache caller.
+ */
 export async function decodeWholeAudio(blob: Blob): Promise<AudioBuffer> {
   const ab = await blob.arrayBuffer();
   const Ctx = window.OfflineAudioContext ?? (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext;
@@ -500,6 +624,12 @@ export async function decodeWholeAudio(blob: Blob): Promise<AudioBuffer> {
 // ---------------------------------------------------------------------------
 // Frame capture (freeze frame / save still)
 
+/**
+ * Captures an exact/near-exact video frame as a high-quality JPEG blob.
+ *
+ * WebCodecs is tried first for predictable frame selection, then the HTML video element handles
+ * unsupported codecs or paths. Missing media throws and no file is persisted by this function.
+ */
 export async function captureFrame(asset: MediaAsset, t: number): Promise<Blob> {
   const blob = await getBlob(asset.id);
   if (!blob) throw new Error('Missing media');

@@ -15,14 +15,27 @@ const BUILD_ID = (process.env.GITHUB_SHA ?? '').slice(0, 12) || 'dev';
 // `@experimental`, and experimentalOnly() stops it if any other file from that folder would still end up in it.
 export const EXPERIMENTAL_MODE = 'experimental';
 
+/**
+ * Prevents unreleased code from entering an ordinary production bundle.
+ *
+ * The plugin runs only for non-experimental builds. It allows the stable `off.ts`
+ * adapter, but errors during Vite's load phase for every other module below
+ * `src/experimental/`, failing the build before an accidental transitive import
+ * can be shipped.
+ */
 export function experimentalOnly(): Plugin {
   let section = '';
   return {
     name: 'rf-experimental-only',
     apply: (_, { command, mode }) => command === 'build' && mode !== EXPERIMENTAL_MODE,
+    /** Captures Vite's normalized project root before modules are loaded. */
     configResolved(config) {
       section = `${normalizePath(config.root)}/src/experimental/`;
     },
+    /**
+     * Inspects every resolved experimental-path import and rejects unstable
+     * modules in stable builds while allowing the contract-compatible adapter.
+     */
     load(id) {
       const file = normalizePath(id.split('?')[0]);
       if (file.startsWith(section) && file !== `${section}off.ts`) {
@@ -39,9 +52,17 @@ export function experimentalOnly(): Plugin {
 // the website serves them next to index.html and the Android app carries them in its assets.
 const LEGAL_FILES = ['LICENSE', 'THIRD_PARTY_NOTICES.md'];
 
+/**
+ * Copies repository-root legal notices into every distribution.
+ *
+ * Emitting the files through Rollup keeps one source of truth and ensures the
+ * PWA, native assets copied by Capacitor and the website all receive identical
+ * license text.
+ */
 function legalFiles(): Plugin {
   return {
     name: 'rf-legal-files',
+    /** Emits root legal documents as literal bundle assets. */
     generateBundle() {
       for (const fileName of LEGAL_FILES) {
         this.emitFile({ type: 'asset', fileName, source: readFileSync(new URL(`./${fileName}`, import.meta.url), 'utf8') });

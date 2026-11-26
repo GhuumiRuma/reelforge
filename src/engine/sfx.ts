@@ -1,9 +1,21 @@
+/**
+ * Procedural sound-effects catalog. Each definition schedules Web Audio nodes
+ * into an offline graph; rendered stereo PCM is then encoded as WAV and imported
+ * through the same media store used for user files.
+ */
 import type { MediaAsset } from '../types';
 import { getBlob, importFiles } from '../lib/media';
 import { encodeWav } from './audio';
 
+/**
+ * A sound recipe receives a fresh offline context and a compressor-fed output.
+ * It schedules all source/filter/gain nodes relative to the context timeline
+ * and returns immediately; nodes need not be manually disposed because the
+ * context ends after the catalogued duration.
+ */
 type Builder = (ctx: OfflineAudioContext, out: AudioNode) => void;
 
+/** UI/import metadata plus the scheduling callback for one generated effect. */
 interface SfxDef {
   id: string;
   name: string;
@@ -12,6 +24,11 @@ interface SfxDef {
   build: Builder;
 }
 
+/**
+ * Creates a mono white-noise buffer of the requested duration at the context
+ * sample rate. Random samples are generated eagerly and the source is returned
+ * unstarted so the caller can place/filter it in its own graph.
+ */
 function noise(ctx: OfflineAudioContext, seconds: number): AudioBufferSourceNode {
   const len = Math.max(1, Math.round(seconds * ctx.sampleRate));
   const buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -22,6 +39,10 @@ function noise(ctx: OfflineAudioContext, seconds: number): AudioBufferSourceNode
   return n;
 }
 
+/**
+ * Creates an exponential attack/decay gain envelope. A non-zero floor avoids
+ * invalid exponential ramps to zero; the returned node remains unconnected.
+ */
 function env(ctx: OfflineAudioContext, at: number, attack: number, peak: number, decay: number): GainNode {
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, at);
@@ -30,6 +51,13 @@ function env(ctx: OfflineAudioContext, at: number, attack: number, peak: number,
   return g;
 }
 
+/**
+ * Schedules one oscillator through a gain envelope into `out`.
+ *
+ * Frequencies may ramp from `f0` to `f1`; the source stops after the attack,
+ * decay, and a short tail, so the offline render has no live source beyond the
+ * declared sound duration.
+ */
 function tone(ctx: OfflineAudioContext, out: AudioNode, type: OscillatorType, f0: number, f1: number, at: number, dur: number, peak: number, attack = 0.003) {
   const o = ctx.createOscillator();
   o.type = type;
@@ -41,12 +69,19 @@ function tone(ctx: OfflineAudioContext, out: AudioNode, type: OscillatorType, f0
   o.stop(at + attack + dur + 0.02);
 }
 
+/**
+ * Built-in effect catalog. `duration` bounds the offline render, while each
+ * `build` callback contributes its layered oscillators/noise to the shared
+ * compressor output. The randomized glitch/click recipes are intentionally
+ * non-deterministic per generation.
+ */
 export const SFX: SfxDef[] = [
   {
     id: 'pop',
     name: 'Pop',
     emoji: '🫧',
     duration: 0.25,
+    /** A short downward sine sweep supplies the soft impact and quick tail. */
     build: (ctx, out) => tone(ctx, out, 'sine', 900, 260, 0, 0.12, 0.9, 0.002),
   },
   {
@@ -54,6 +89,7 @@ export const SFX: SfxDef[] = [
     name: 'Click',
     emoji: '🖱️',
     duration: 0.12,
+    /** High-passed noise adds the transient while a high sine adds a crisp tick. */
     build: (ctx, out) => {
       const n = noise(ctx, 0.05);
       const hp = ctx.createBiquadFilter();
@@ -69,6 +105,7 @@ export const SFX: SfxDef[] = [
     name: 'Whoosh',
     emoji: '💨',
     duration: 0.9,
+    /** Band-passed noise opens and closes in frequency under a rounded gain arc. */
     build: (ctx, out) => {
       const n = noise(ctx, 0.9);
       const bp = ctx.createBiquadFilter();
@@ -90,6 +127,7 @@ export const SFX: SfxDef[] = [
     name: 'Ding',
     emoji: '🔔',
     duration: 1.6,
+    /** Three detuned-length harmonic partials produce a bell-like long decay. */
     build: (ctx, out) => {
       tone(ctx, out, 'sine', 1318.5, 1318.5, 0, 1.5, 0.55, 0.004);
       tone(ctx, out, 'sine', 2637, 2637, 0, 0.8, 0.18, 0.004);
@@ -101,6 +139,7 @@ export const SFX: SfxDef[] = [
     name: 'Notify',
     emoji: '📲',
     duration: 0.7,
+    /** Two clean sine notes make a compact, staggered notification chime. */
     build: (ctx, out) => {
       tone(ctx, out, 'sine', 880, 880, 0, 0.25, 0.5);
       tone(ctx, out, 'sine', 1320, 1320, 0.13, 0.5, 0.5);
@@ -111,6 +150,7 @@ export const SFX: SfxDef[] = [
     name: 'Boom',
     emoji: '💥',
     duration: 1.5,
+    /** A deep sine descent is reinforced by low-passed decaying noise. */
     build: (ctx, out) => {
       tone(ctx, out, 'sine', 120, 38, 0, 1.3, 1, 0.005);
       const n = noise(ctx, 1.2);
@@ -127,6 +167,7 @@ export const SFX: SfxDef[] = [
     name: 'Bass drop',
     emoji: '🔊',
     duration: 1.8,
+    /** One long sine frequency sweep recreates a bass-drop pitch fall. */
     build: (ctx, out) => tone(ctx, out, 'sine', 160, 32, 0, 1.7, 1, 0.01),
   },
   {
@@ -134,6 +175,7 @@ export const SFX: SfxDef[] = [
     name: 'Riser',
     emoji: '🚀',
     duration: 2.2,
+    /** Saw and high-passed noise rise in pitch/filter/gain before a sharp endpoint cut. */
     build: (ctx, out) => {
       const o = ctx.createOscillator();
       o.type = 'sawtooth';
@@ -168,6 +210,7 @@ export const SFX: SfxDef[] = [
     name: 'Glitch',
     emoji: '👾',
     duration: 0.5,
+    /** Random square-wave blips are scheduled densely across the first 420 ms. */
     build: (ctx, out) => {
       let t = 0;
       while (t < 0.42) {
@@ -182,6 +225,7 @@ export const SFX: SfxDef[] = [
     name: 'Camera',
     emoji: '📸',
     duration: 0.35,
+    /** Two band-passed noise bursts model the mechanical shutter/capture pair. */
     build: (ctx, out) => {
       for (const at of [0, 0.09]) {
         const n = noise(ctx, 0.08);
@@ -199,6 +243,7 @@ export const SFX: SfxDef[] = [
     name: 'Boing',
     emoji: '🤪',
     duration: 0.8,
+    /** An LFO modulates oscillator pitch while the base note springs upward. */
     build: (ctx, out) => {
       const o = ctx.createOscillator();
       o.type = 'sine';
@@ -222,6 +267,7 @@ export const SFX: SfxDef[] = [
     name: 'Ta-da',
     emoji: '🎉',
     duration: 1.4,
+    /** Four staggered major-chord triangle notes form an arpeggiated flourish. */
     build: (ctx, out) => {
       const notes = [523.25, 659.25, 783.99, 1046.5];
       notes.forEach((f, i) => tone(ctx, out, 'triangle', f, f, i * 0.07, 1.1 - i * 0.05, 0.28, 0.005));
@@ -229,8 +275,16 @@ export const SFX: SfxDef[] = [
   },
 ];
 
+/** Fixed render/import sample rate; two channels are encoded even for mono recipes. */
 const RATE = 48000;
 
+/**
+ * Renders a catalog entry into a 48 kHz stereo WAV blob.
+ *
+ * A two-channel offline context and master compressor limit cross-recipe
+ * peaks. This does not register media or persist anything, making repeated calls
+ * deterministic in duration but potentially randomized in noise/glitch content.
+ */
 export async function renderSfx(id: string): Promise<Blob> {
   const def = SFX.find((s) => s.id === id);
   if (!def) throw new Error('Unknown sound');
@@ -244,9 +298,16 @@ export async function renderSfx(id: string): Promise<Blob> {
   return encodeWav([buf.getChannelData(0), buf.getChannelData(1)], RATE);
 }
 
+/** Session cache of imported assets, used to avoid duplicate library entries across repeated taps. */
 const imported = new Map<string, MediaAsset>();
 
-/** Generates the sound and stores it in the media library (once per session). */
+/**
+ * Generates and imports a sound into the media library.
+ *
+ * A cached asset is reused only while its blob still exists; otherwise the
+ * function renders a fresh WAV and delegates persistence/ID generation to
+ * `importFiles`. It rejects with the import failure or for an unknown id.
+ */
 export async function importSfx(id: string): Promise<MediaAsset> {
   const prev = imported.get(id);
   if (prev && (await getBlob(prev.id))) return prev;

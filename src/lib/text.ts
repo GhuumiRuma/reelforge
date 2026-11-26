@@ -1,6 +1,14 @@
+/**
+ * Font catalog, loading coordination, and canvas text rendering.
+ *
+ * The renderer targets both HTML and Offscreen canvases with the same measured layout. Text
+ * effects, wrapping, word highlights, and texture-size clamping are computed here so preview and
+ * export paths consume identical typography.
+ */
 import type { TextStyle, Word } from '../types';
 import { rgba } from './util';
 
+/** Font families bundled by the app and the weights that are known to be available. */
 export const FONTS: { family: string; weights: number[] }[] = [
   { family: 'Montserrat', weights: [600, 800, 900] },
   { family: 'Inter', weights: [400, 600, 800] },
@@ -16,21 +24,40 @@ export const FONTS: { family: string; weights: number[] }[] = [
   { family: 'Roboto Mono', weights: [500, 700] },
 ];
 
+/**
+ * Selects the nearest weight actually provided by a known family.
+ * Unknown families retain the caller's requested weight so generic CSS fonts still work.
+ */
 export function closestWeight(family: string, weight: number): number {
   const f = FONTS.find((x) => x.family === family);
   if (!f) return weight;
   return f.weights.reduce((a, b) => (Math.abs(b - weight) < Math.abs(a - weight) ? b : a), f.weights[0]);
 }
 
+/**
+ * Builds a canvas `font` declaration for the requested style.
+ *
+ * The pixel size uses fixed precision, the emoji fallbacks follow platform fonts, and an unknown
+ * family is quoted verbatim with a final sans-serif fallback.
+ */
 export function fontCss(style: Pick<TextStyle, 'font' | 'weight' | 'italic'>, px: number): string {
   const w = closestWeight(style.font, style.weight);
   return `${style.italic ? 'italic ' : ''}${w} ${px.toFixed(2)}px "${style.font}", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
 }
 
+/** Successfully attempted family/weight/style combinations, including system-font fallbacks. */
 const loadedFonts = new Set<string>();
+/** Coalesces simultaneous load requests for an identical font face. */
 const loadingFonts = new Map<string, Promise<void>>();
+/** Event target dispatching `loaded` after a requested face finishes its best-effort load. */
 export const fontEvents = new EventTarget();
 
+/**
+ * Ensures one font face is available to canvas rendering.
+ *
+ * Calls are deduplicated by face. Font API failures are treated as fallback-font readiness rather
+ * than user-visible errors, and completion always emits `loaded` so renderers can retry.
+ */
 export function ensureFont(family: string, weight: number, italic = false): Promise<void> {
   const w = closestWeight(family, weight);
   const key = `${italic ? 'i' : 'n'} ${w} ${family}`;
@@ -51,6 +78,10 @@ export function ensureFont(family: string, weight: number, italic = false): Prom
   return p;
 }
 
+/**
+ * Synchronously reports whether a face's load attempt has completed.
+ * The first false check starts loading in the background, allowing UI code to trigger a rerender.
+ */
 export function isFontReady(family: string, weight: number, italic = false): boolean {
   const key = `${italic ? 'i' : 'n'} ${closestWeight(family, weight)} ${family}`;
   if (loadedFonts.has(key)) return true;
@@ -58,6 +89,7 @@ export function isFontReady(family: string, weight: number, italic = false): boo
   return false;
 }
 
+/** Built-in text style presets that may be merged into default or existing item styles. */
 export const TEXT_PRESETS: { id: string; name: string; style: Partial<TextStyle> }[] = [
   { id: 'classic', name: 'Classic', style: { font: 'Montserrat', weight: 800, color: '#ffffff', shadowBlur: 0.12, strokeWidth: 0, bgOpacity: 0 } },
   { id: 'outline', name: 'Outline', style: { font: 'Montserrat', weight: 900, color: '#ffffff', stroke: '#000000', strokeWidth: 0.09, shadowBlur: 0, bgOpacity: 0 } },
@@ -76,6 +108,7 @@ export const TEXT_PRESETS: { id: string; name: string; style: Partial<TextStyle>
   { id: 'condensed', name: 'Condensed', style: { font: 'Oswald', weight: 700, color: '#ffffff', uppercase: true, stroke: '#000000', strokeWidth: 0.05, shadowBlur: 0, bgOpacity: 0 } },
 ];
 
+/** Caption-focused presets, including optional per-word highlight treatment. */
 export const CAPTION_PRESETS: { id: string; name: string; style: Partial<TextStyle> }[] = [
   { id: 'bold', name: 'Bold Pop', style: { font: 'Montserrat', weight: 900, uppercase: true, color: '#ffffff', stroke: '#000000', strokeWidth: 0.11, shadowBlur: 0, bgOpacity: 0, highlight: '#ffe14d', highlightOn: true, size: 0.07 } },
   { id: 'hype', name: 'Hype', style: { font: 'Anton', weight: 400, uppercase: true, color: '#ffffff', stroke: '#000000', strokeWidth: 0.09, shadowBlur: 0, bgOpacity: 0, highlight: '#3dff6e', highlightOn: true, size: 0.08 } },
@@ -85,8 +118,10 @@ export const CAPTION_PRESETS: { id: string; name: string; style: Partial<TextSty
   { id: 'comic', name: 'Comic', style: { font: 'Bangers', weight: 400, color: '#ffffff', stroke: '#000000', strokeWidth: 0.1, shadowBlur: 0, bgOpacity: 0, highlight: '#ffd60a', highlightOn: true, size: 0.075, letterSpacing: 0.03 } },
 ];
 
+/** Common drawing API shared by visible and worker/offscreen canvas contexts. */
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
+/** Inputs to the shared text measurer/renderer. Dimensions are in output pixels. */
 export interface TextRenderOpts {
   text: string;
   style: TextStyle;
@@ -97,19 +132,26 @@ export interface TextRenderOpts {
   visibleChars?: number;
 }
 
+/** One measured non-whitespace token and its sequential caption-word index. */
 interface Token {
   text: string;
   w: number;
   word: number;
 }
 
+/** Maximum texture dimension supported by the conservative GPU rendering fallback. */
 const MAX_TEX = 4096;
 
+/** Applies canvas letter spacing when the browser context supports that optional property. */
 function setSpacing(ctx: Ctx2D, px: number) {
   const c = ctx as Ctx2D & { letterSpacing?: string };
   if ('letterSpacing' in c) c.letterSpacing = `${px.toFixed(2)}px`;
 }
 
+/**
+ * Measures wrapped lines without mutating the target canvas dimensions.
+ * Sequential token indices follow whitespace-normalized caption word order across paragraphs.
+ */
 function layout(ctx: Ctx2D, o: TextRenderOpts, fontPx: number) {
   const s = o.style;
   ctx.font = fontCss(s, fontPx);
@@ -137,6 +179,7 @@ function layout(ctx: Ctx2D, o: TextRenderOpts, fontPx: number) {
   return { lines, space, wordCount: word };
 }
 
+/** Appends one clamped rounded-rectangle subpath to the current canvas path. */
 function roundRectPath(ctx: Ctx2D, x: number, y: number, w: number, h: number, r: number) {
   r = Math.max(0, Math.min(r, w / 2, h / 2));
   ctx.moveTo(x + r, y);
@@ -148,8 +191,13 @@ function roundRectPath(ctx: Ctx2D, x: number, y: number, w: number, h: number, r
 }
 
 /**
- * Draws a text block onto `canvas`, resizing it to fit. Returns the factor by which the
- * canvas must be scaled up when displayed (only > 1 when the texture had to be clamped).
+ * Measures and draws a complete styled text block onto `canvas`, resizing the backing store as
+ * needed.
+ *
+ * Wrapping, alignment, per-line backgrounds, stroke/shadow padding, active-word highlighting and
+ * character-reveal limits share the same measured token layout. Textures above 4096 px are
+ * rendered at a scaled size; the returned factor tells WebGL/display callers how much to enlarge
+ * that texture to retain the requested visual size. The canvas is the only output side effect.
  */
 export function renderTextCanvas(canvas: HTMLCanvasElement | OffscreenCanvas, o: TextRenderOpts): number {
   const ctx = canvas.getContext('2d') as Ctx2D;
@@ -262,6 +310,10 @@ export function renderTextCanvas(canvas: HTMLCanvasElement | OffscreenCanvas, o:
   return upscale;
 }
 
+/**
+ * Counts text by normalized Unicode UTF-16 string length for reveal animations.
+ * Runs of whitespace count as one character, matching the renderer's visual word separation.
+ */
 export function textCharCount(text: string): number {
   return text.replace(/\s+/g, ' ').length;
 }

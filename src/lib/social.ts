@@ -5,16 +5,20 @@
  * updated. Only public posts work; nothing here signs in.
  */
 
+/** Supported public-social download adapters. */
 export type SocialSite = 'tiktok' | 'instagram';
 
+/** Human-readable adapter names used in progress and error UI. */
 export const SITE_NAMES: Record<SocialSite, string> = { tiktok: 'TikTok', instagram: 'Instagram' };
 
+/** Parsed public post identity normalized enough for the matching network extractor. */
 export interface SocialLink {
   site: SocialSite;
   /** the link as https, without tracking junk the sites don't need */
   url: string;
 }
 
+/** Expected public-post/network parsing failure whose message is suitable for download UI. */
 export class SocialError extends Error {}
 
 /** A TikTok or Instagram post link; null for anything else. */
@@ -78,6 +82,7 @@ export function instagramMediaId(shortcode: string): string {
 // ---------------------------------------------------------------------------
 // Networking (supplied by the caller so the extractors can be tested)
 
+/** Minimal transport request accepted by the injectable native social-network adapter. */
 export interface HttpRequest {
   method?: 'GET' | 'POST';
   headers?: Record<string, string>;
@@ -85,6 +90,7 @@ export interface HttpRequest {
   signal?: AbortSignal;
 }
 
+/** Normalized text response, after redirects and with cookie/header spelling made predictable. */
 export interface HttpTextResponse {
   status: number;
   /** after redirects */
@@ -94,6 +100,12 @@ export interface HttpTextResponse {
   text: string;
 }
 
+/**
+ * Network boundary for TikTok/Instagram extraction.
+ *
+ * Keeping transport injectable allows parser tests to use fixtures. The Android implementation
+ * preserves the platform cookie jar and bypasses browser CORS; no ReelForge-hosted proxy is used.
+ */
 export interface SocialNet {
   /** a request whose body is read as text; cookies are kept between requests */
   text(url: string, init?: HttpRequest): Promise<HttpTextResponse>;
@@ -101,8 +113,10 @@ export interface SocialNet {
   bytes(url: string, init?: HttpRequest): Promise<Response>;
 }
 
+/** Browser identity expected by public site desktop page endpoints. */
 const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
+/** Consistent desktop navigation headers used for public post-page requests. */
 const PAGE_HEADERS: Record<string, string> = {
   'User-Agent': DESKTOP_UA,
   Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -126,6 +140,7 @@ export function cookieFrom(setCookie: string | undefined, name: string): string 
 // ---------------------------------------------------------------------------
 // What a post is
 
+/** Download candidates and metadata extracted from one public social post. */
 export interface SocialPost {
   site: SocialSite;
   title: string;
@@ -139,12 +154,14 @@ export interface SocialPost {
 // ---------------------------------------------------------------------------
 // TikTok
 
+/** Partial TikTok page bit-rate shape; all optional fields survive upstream schema changes safely. */
 interface TikTokBitrate {
   CodecType?: string;
   Bitrate?: number;
   PlayAddr?: { UrlList?: string[]; Height?: number; Width?: number };
 }
 
+/** Relevant subset of TikTok's rehydration item payload. */
 interface TikTokItem {
   desc?: string;
   author?: { uniqueId?: string; nickname?: string };
@@ -199,6 +216,12 @@ export function parseTikTokPage(html: string, maxHeight = 1080): Omit<SocialPost
   };
 }
 
+/**
+ * Opens a TikTok share/full URL and extracts a playable H.264 post.
+ *
+ * Redirect pages may need one canonical-ID retry. Errors distinguish site refusal from page schema
+ * failures and extraction privacy is limited to a public post request using Android's cookie jar.
+ */
 async function resolveTikTok(link: SocialLink, net: SocialNet, signal?: AbortSignal, maxHeight?: number): Promise<SocialPost> {
   let page = await net.text(link.url, { headers: PAGE_HEADERS, signal });
   // Short links can land on a page without the video; open the full link instead.
@@ -214,10 +237,14 @@ async function resolveTikTok(link: SocialLink, net: SocialNet, signal?: AbortSig
 // Instagram
 
 /** Fallbacks for when the post page doesn't say; Instagram changes these now and then. */
+/** Current fallback GraphQL document ID discovered from Instagram page code. */
 const IG_DOC_ID = '27776306792043877';
+/** Current fallback friendly GraphQL query name. */
 const IG_QUERY = 'PolarisLoggedOutDesktopWWWPostRootContentQuery';
+/** Public Instagram web application ID used by its own logged-out API. */
 const IG_APP_ID = '936619743392459';
 
+/** Tokens and dynamic GraphQL identifiers parsed from Instagram's public post page. */
 export interface InstagramPageInfo {
   lsd: string | null;
   docId: string;
@@ -244,6 +271,7 @@ export function parseInstagramPage(html: string): InstagramPageInfo {
   return { lsd, docId, queryName, csrf };
 }
 
+/** Relevant partial shape of Instagram GraphQL media/carousel data. */
 interface IgMedia {
   media_type?: number;
   video_versions?: { url?: string; width?: number; height?: number; type?: number }[];
@@ -276,6 +304,12 @@ export function parseInstagramMedia(json: unknown, index = 1): Omit<SocialPost, 
   };
 }
 
+/**
+ * Resolves an Instagram share/post URL into public media using the page's own GraphQL tokens.
+ *
+ * Share links may redirect or expose an `og:url`, and login/rate-limit/schema responses become
+ * explicit user-facing errors. Requests stay on Instagram and depend on its public/ephemeral state.
+ */
 async function resolveInstagram(link: SocialLink, net: SocialNet, signal?: AbortSignal): Promise<SocialPost> {
   let page = await net.text(link.url, { headers: PAGE_HEADERS, signal });
   let code = instagramShortcode(page.url) ?? instagramShortcode(link.url);
@@ -338,6 +372,7 @@ async function resolveInstagram(link: SocialLink, net: SocialNet, signal?: Abort
 // ---------------------------------------------------------------------------
 // Download
 
+/** Public download limits, cancellation, and progress reporting. */
 export interface SocialDownloadOptions {
   /** largest picture height to choose, when the site offers several */
   maxHeight?: number;
@@ -345,6 +380,7 @@ export interface SocialDownloadOptions {
   onProgress?: (fraction: number | null, label: string) => void;
 }
 
+/** Successfully downloaded social bytes and their display metadata. */
 export interface SocialDownload {
   /** an MP4 with picture and sound */
   blob: Blob;
@@ -352,9 +388,16 @@ export interface SocialDownload {
   author: string;
 }
 
+/** Range-request chunk size used to balance progress granularity and mobile request overhead. */
 const CHUNK = 8 * 1024 * 1024;
 
-/** Finds the post's video and downloads it. */
+/**
+ * Resolves a parsed public post and downloads the first usable candidate URL.
+ *
+ * The chosen native network adapter performs page and ranged-byte requests without a ReelForge
+ * proxy. Cancellation aborts immediately; individual URL/network failures fall through to other
+ * candidates, and a terminal `SocialError` reports the best last HTTP status or connection hint.
+ */
 export async function downloadSocial(link: SocialLink, net: SocialNet, o: SocialDownloadOptions = {}): Promise<SocialDownload> {
   const name = SITE_NAMES[link.site];
   o.onProgress?.(null, `Opening the ${name} post`);
@@ -418,6 +461,7 @@ async function fetchRanges(url: string, headers: Record<string, string>, net: So
   return new Blob(parts, { type: /^video\//.test(type) ? type.split(';')[0] : 'video/mp4' });
 }
 
+/** Produces a short one-line filename/display title, removing hashtag-only noise when possible. */
 function cleanTitle(text: string | undefined | null): string {
   if (!text) return '';
   const firstLine = text.split('\n')[0].replace(/\s+/g, ' ').trim();

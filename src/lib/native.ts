@@ -5,6 +5,7 @@
 import { Capacitor, CapacitorHttp, SystemBars, SystemBarsStyle } from '@capacitor/core';
 import type { SocialNet } from './social';
 
+/** Reports whether Capacitor is running on a native platform rather than in the web build. */
 export const isNative = (): boolean => Capacitor.isNativePlatform();
 
 /**
@@ -16,12 +17,17 @@ export async function nativeSystemBars(theme: 'light' | 'dark'): Promise<void> {
   await SystemBars.setStyle({ style: theme === 'light' ? SystemBarsStyle.Light : SystemBarsStyle.Dark });
 }
 
+/**
+ * Encodes bytes for Capacitor plugins in bounded chunks.
+ * Chunking avoids spreading huge `String.fromCharCode` argument lists onto the JavaScript stack.
+ */
 function toBase64(bytes: Uint8Array): string {
   let s = '';
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(s);
 }
 
+/** Decodes plugin-returned base64 into an owned ArrayBuffer-backed byte array. */
 function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
   const s = atob(b64);
   const out = new Uint8Array(s.length);
@@ -87,6 +93,12 @@ export function anyFetch(input: RequestInfo | URL, init?: RequestInit): Promise<
  * requests on its own (Capacitor installs a cookie manager), as a browser would.
  */
 export const nativeNet: SocialNet = {
+  /**
+   * Reads a social page/API response as text through Android networking.
+   *
+   * Redirected URLs and normalized headers are retained. Cookies stay in Capacitor's cookie jar;
+   * the caller passes no credentials or token through ReelForge servers.
+   */
   async text(url, init = {}) {
     if (!isNative()) throw new TypeError('Only the Android app can reach this site.');
     if (init.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -106,6 +118,7 @@ export const nativeNet: SocialNet = {
     const data: unknown = res.data;
     return { status: res.status, url: res.url || url, headers, text: typeof data === 'string' ? data : JSON.stringify(data ?? '') };
   },
+  /** Reads byte ranges through the same native HTTP adapter used for binary downloads. */
   bytes: (url, init = {}) => nativeFetch(url, { method: init.method, headers: init.headers, body: init.body, signal: init.signal }),
 };
 
@@ -120,6 +133,12 @@ export interface WriteOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Writes a blob incrementally into the Capacitor cache or Documents filesystem.
+ *
+ * Each 3 MiB chunk is base64-encoded to satisfy plugin APIs. Cancellation is checked around every
+ * chunk; any stopped/failed write deletes its partial file so it cannot be mistaken for complete.
+ */
 async function writeNative(blob: Blob, path: string, directory: 'cache' | 'documents', opts: WriteOptions = {}): Promise<string> {
   const { Filesystem, Directory } = await import('@capacitor/filesystem');
   const dir = directory === 'cache' ? Directory.Cache : Directory.Documents;

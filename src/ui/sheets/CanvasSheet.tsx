@@ -1,3 +1,7 @@
+/**
+ * Project-wide canvas presentation controls. These edits affect aspect ratio,
+ * all main clips' fit mode, and the project background rather than one selection.
+ */
 import { useShallow } from 'zustand/react/shallow';
 import { ASPECTS, type Aspect, type MainItem } from '../../types';
 import { haptic } from '../../lib/haptics';
@@ -16,12 +20,14 @@ const FIT_OPTIONS: { value: FitState; label: string }[] = [
   { value: 'fill', label: 'Fill' },
 ];
 
+/** Collapses all main clips to a uniform fit mode, or exposes a mixed state. */
 function fitState(main: MainItem[]): FitState | null {
   if (!main.length) return null;
   const f = main[0].fit;
   return main.every((m) => m.fit === f) ? f : 'mixed';
 }
 
+/** Controlled Canvas sheet whose every mutation flows through editor history/save. */
 export function CanvasSheet({ onClose }: { onClose: () => void }) {
   const { aspect, bg, fit } = useEditor(
     useShallow((s) => ({
@@ -32,6 +38,7 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
   );
   const apply = useEditor((s) => s.apply);
 
+  /** Applies a changed aspect ratio once and haptically confirms the project-level edit. */
   const setAspect = (a: Aspect) => {
     if (a === aspect) return;
     apply((d) => {
@@ -40,6 +47,7 @@ export function CanvasSheet({ onClose }: { onClose: () => void }) {
     haptic('light');
   };
 
+  /** Applies a concrete fit choice to every main clip; mixed is display-only. */
   const setFit = (f: FitState) => {
     if (f === 'mixed' || f === fit) return;
     apply((d) => {

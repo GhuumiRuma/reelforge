@@ -1,3 +1,8 @@
+/**
+ * Main-thread caption pipeline: render and transfer a speech mix to a dedicated
+ * ASR worker, normalize timed words, group them into editable text items, and
+ * export the resulting project text as SRT.
+ */
 import type { AudioItem, Project, TextItem, TextStyle } from '../types';
 import { textItem } from '../lib/defaults';
 import { itemEnd, pickLane } from '../lib/layout';
@@ -5,13 +10,16 @@ import { CAPTION_PRESETS } from '../lib/text';
 import { renderMix } from './audio';
 import type { CaptionModel, CaptionRequest, CaptionWorkerMessage, RawWord } from './captions.worker';
 
+/** Re-exports the worker's supported model identifiers for consumers of the main-thread caption API. */
 export type { CaptionModel };
 
+/** Models exposed by the caption UI, ordered from lower cost to greater accuracy. */
 export const CAPTION_MODELS: { id: CaptionModel; name: string; note: string }[] = [
   { id: 'tiny', name: 'Fast', note: '≈ 65 MB one-time download' },
   { id: 'base', name: 'Accurate', note: '≈ 100 MB one-time download' },
 ];
 
+/** Whisper language codes paired with stable labels for the caption form. */
 export const CAPTION_LANGUAGES: [string, string][] = [
   ['auto', 'Auto-detect'],
   ['en', 'English'],
@@ -36,6 +44,7 @@ export const CAPTION_LANGUAGES: [string, string][] = [
   ['zh', 'Chinese'],
 ];
 
+/** User choices carried from caption generation through style/layout. */
 export interface CaptionOptions {
   model: CaptionModel;
   language: string;
@@ -48,6 +57,7 @@ export interface CaptionOptions {
   replace: boolean;
 }
 
+/** Defaults optimized for a fast first pass with speech-only audio and replace behavior. */
 export const DEFAULT_CAPTION_OPTIONS: CaptionOptions = {
   model: 'tiny',
   language: 'auto',
@@ -58,6 +68,7 @@ export const DEFAULT_CAPTION_OPTIONS: CaptionOptions = {
   replace: true,
 };
 
+/** Phase-local progress, with byte counters available only during a model download. */
 export interface CaptionProgress {
   phase: 'audio' | 'download' | 'transcribe';
   progress: number;
@@ -65,6 +76,7 @@ export interface CaptionProgress {
   total?: number;
 }
 
+/** A single normalized token and its project-timeline interval in seconds. */
 export interface TimedWord {
   text: string;
   start: number;
@@ -74,19 +86,32 @@ export interface TimedWord {
 let worker: Worker | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
+/** Clears the idle timer and lazily creates the singleton speech-recognition worker. */
 function getWorker(): Worker {
   clearTimeout(idleTimer);
   worker ??= new Worker(new URL('./captions.worker.ts', import.meta.url), { type: 'module', name: 'captions' });
   return worker;
 }
 
+/** Terminates the worker, releasing loaded model/WASM memory, and prevents later message delivery. */
 function killWorker() {
   clearTimeout(idleTimer);
   worker?.terminate();
   worker = null;
 }
 
-/** Transcribes the project's voice audio into timed words (project time). */
+/**
+ * Mixes project speech and sends it to the ASR worker, returning normalized words
+ * in project time.
+ *
+ * Music is excluded unless requested; sound effects are always excluded. Audio
+ * is rendered as 16 kHz mono and ownership-transferred to the worker. The
+ * coordinator uses one worker and one pair of message handlers, so callers
+ * must not overlap transcription requests. Cancellation terminates the worker
+ * rather than trusting an in-flight model call to become interruptible. The
+ * worker reports download/transcription progress and is kept for two idle
+ * minutes to make repeated caption requests cheaper.
+ */
 export async function transcribe(
   p: Project,
   o: CaptionOptions,
@@ -145,6 +170,7 @@ export async function transcribe(
   return cleanWords(raw);
 }
 
+/** Converts transport/model failures into actionable user messages when the cause is recognized. */
 function friendlyError(msg: string): string {
   if (/fetch|network|Failed to load/i.test(msg)) return 'Could not download the speech model. Check your connection and try again.';
   if (/memory|allocation|OOM/i.test(msg)) return 'Not enough memory to run speech recognition. Try the Fast model or close other apps.';
@@ -153,7 +179,14 @@ function friendlyError(msg: string): string {
 
 const HAS_TEXT = /[\p{L}\p{N}]/u;
 
-/** Normalizes raw recognizer output into single-token words with monotonic times. */
+/**
+ * Normalizes recognizer chunks into individual non-empty words.
+ *
+ * Bracketed non-speech labels are discarded, punctuation-only chunks are joined
+ * to the preceding token, multi-word chunks are divided evenly across their
+ * timestamp, and backward/too-short timestamps are repaired. The function
+ * does not mutate `raw`.
+ */
 export function cleanWords(raw: RawWord[]): TimedWord[] {
   const out: TimedWord[] = [];
   for (const r of raw) {
@@ -175,7 +208,14 @@ export function cleanWords(raw: RawWord[]): TimedWord[] {
   return out;
 }
 
-/** Groups words into caption-sized phrases. */
+/**
+ * Splits words into display-sized phrases without changing their timestamps.
+ *
+ * A group ends on word-count/duration limits, a 0.7 s pause, sentence
+ * punctuation, or a suitably long clause. `maxWords` is rounded and clamped to
+ * at least one; `maxDur` is a soft boundary evaluated before adding the next
+ * word.
+ */
 export function groupWords(words: TimedWord[], maxWords: number, maxDur = 2.8): TimedWord[][] {
   const groups: TimedWord[][] = [];
   let cur: TimedWord[] = [];
@@ -203,11 +243,19 @@ export function groupWords(words: TimedWord[], maxWords: number, maxDur = 2.8): 
   return groups;
 }
 
+/** Resolves a preset id to its style fragment, falling back to the first preset for unknown ids. */
 export function captionStyle(presetId: string): Partial<TextStyle> {
   return (CAPTION_PRESETS.find((c) => c.id === presetId) ?? CAPTION_PRESETS[0]).style;
 }
 
-/** Builds caption text items for the given words. Lanes are assigned against `existing`. */
+/**
+ * Converts normalized words into caption `TextItem`s at project time.
+ *
+ * All generated captions share one collision-free lane selected across
+ * `existing`; each item carries caption-local word offsets for highlighting.
+ * Items end before a closely following phrase and are bounded to at least 0.1 s.
+ * The returned objects are new and can be inserted into a project store recipe.
+ */
 export function buildCaptions(words: TimedWord[], o: Pick<CaptionOptions, 'maxWords' | 'presetId'>, existing: TextItem[]): TextItem[] {
   const groups = groupWords(words, o.maxWords);
   if (!groups.length) return [];
@@ -234,11 +282,16 @@ export function buildCaptions(words: TimedWord[], o: Pick<CaptionOptions, 'maxWo
   return items;
 }
 
-/** Restyles every caption in the project (mutates; use inside a store recipe). */
+/**
+ * Mutates every generated caption's style with the supplied fragment.
+ * Ordinary user text remains unchanged; callers should use this inside the
+ * project's immutable store recipe/transaction.
+ */
 export function applyCaptionStyle(p: Project, style: Partial<TextStyle>) {
   for (const t of p.texts) if (t.caption) Object.assign(t.style, style);
 }
 
+/** Formats project seconds as SRT's non-negative `HH:MM:SS,mmm` timestamp syntax. */
 function srtTime(t: number) {
   const ms = Math.max(0, Math.round(t * 1000));
   const h = Math.floor(ms / 3_600_000);
@@ -249,7 +302,13 @@ function srtTime(t: number) {
   return `${p2(h)}:${p2(m)}:${p2(s)},${String(r).padStart(3, '0')}`;
 }
 
-/** Exports captions (or all text if there are no captions) as an SRT subtitle file. */
+/**
+ * Serializes caption items as SRT in timeline order.
+ *
+ * To make a useful fallback for projects without generated captions, ordinary
+ * text is exported instead. The source project is not mutated, and multiline
+ * item text is preserved as-is.
+ */
 export function toSrt(p: Project): string {
   const caps = p.texts.filter((t) => t.caption);
   const list = (caps.length ? caps : p.texts).slice().sort((a, b) => a.start - b.start);

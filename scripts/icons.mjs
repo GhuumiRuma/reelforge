@@ -1,4 +1,11 @@
-// Generates the app icons in public/ (no dependencies): node scripts/icons.mjs
+/**
+ * Deterministically generates all PWA and Android launcher icon assets.
+ *
+ * The script implements only the subset of vector rendering and PNG encoding
+ * required by the ReelForge mark, so icon updates need no native design tooling.
+ * Run `node scripts/icons.mjs`; committed binary assets are then derived from the
+ * same geometry, gradients and safe-zone settings.
+ */
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { deflateSync, crc32 } from 'node:zlib';
 
@@ -13,6 +20,7 @@ const TRI = [
 ];
 const R = 0.045;
 
+/** Converts a `#rrggbb` CSS color into normalized RGB floats. */
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
 const BG_TOP = hex('#2a2a36');
 const BG_BOTTOM = hex('#0b0b0f');
@@ -20,11 +28,19 @@ const PINK_TOP = hex('#ff5a85');
 const PINK_BOTTOM = hex('#e0245e');
 const GLOW = hex('#ff3d6e');
 
+/** Linear-interpolates two RGB colors channel by channel. */
 const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+/** Constrains a scalar to the closed interval `[a, b]`. */
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+/** Returns the dot product of two 2D vectors. */
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 
-// Signed distance to a triangle (Inigo Quilez).
+/**
+ * Computes a signed distance from a point to the play triangle.
+ *
+ * The sign identifies the interior. The renderer subtracts `R` from this field
+ * to round the result and antialias its edges.
+ */
 function sdTriangle(p, [p0, p1, p2]) {
   const e = [
     [p1[0] - p0[0], p1[1] - p0[1]],
@@ -48,6 +64,12 @@ function sdTriangle(p, [p0, p1, p2]) {
   return -Math.sqrt(dx) * Math.sign(dy);
 }
 
+/**
+ * Computes the signed distance to a centered rounded rectangle.
+ *
+ * Positive values are outside the tile; this supplies the rounded-corner mask used
+ * by PWA and legacy Android icons.
+ */
 function sdRoundRect(p, radius) {
   const qx = Math.abs(p[0] - 0.5) - (0.5 - radius);
   const qy = Math.abs(p[1] - 0.5) - (0.5 - radius);
@@ -55,6 +77,8 @@ function sdRoundRect(p, radius) {
 }
 
 /**
+ * Renders one icon at four samples per pixel and encodes it as PNG.
+ *
  * @param size output pixels
  * @param corner tile corner radius (0 = full-bleed square)
  * @param scale size of the glyph relative to the tile (maskable icons keep it inside the safe zone)
@@ -96,10 +120,17 @@ function render(size, { corner = 0, scale = 1 } = {}) {
   return encodePng(size, size, px);
 }
 
+/**
+ * Encodes an RGBA buffer as a minimal, standards-compliant PNG.
+ *
+ * Pixels are copied into one filtered scanline stream, zlib-compressed, and wrapped
+ * in `IHDR`, `IDAT` and `IEND` chunks. PNG chunk CRCs use Node's zlib implementation.
+ */
 function encodePng(w, h, rgba) {
   const stride = w * 4;
   const raw = Buffer.alloc((stride + 1) * h);
   for (let y = 0; y < h; y++) rgba.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
+  /** Prefixes a PNG payload with its length and appends the CRC-32 of type plus data. */
   const chunk = (type, data) => {
     const len = Buffer.alloc(4);
     len.writeUInt32BE(data.length);
@@ -133,6 +164,7 @@ for (const [name, data] of Object.entries(files)) {
   console.log(`${name}  ${data.length} bytes`);
 }
 
+/** Formats normalized geometry for the 64 by 64 SVG viewBox. */
 const f = (v) => +(v * 64).toFixed(2);
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>

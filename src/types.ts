@@ -1,3 +1,12 @@
+/**
+ * Persisted domain model shared by the editor, rendering engines, library and backups.
+ *
+ * Times are seconds unless a field says otherwise. Geometry is expressed in
+ * canvas-relative units where possible so project state stays independent of the
+ * current preview, device pixel ratio and export resolution. The `version` field
+ * makes the persisted schema explicit without embedding migrations into media or
+ * track item references.
+ */
 export type Aspect = '9:16' | '16:9' | '1:1' | '4:5' | '3:4' | '4:3' | '21:9';
 
 export const ASPECTS: { id: Aspect; hint: string; w: number; h: number }[] = [
@@ -264,10 +273,15 @@ export interface Project {
   audios: AudioItem[];
 }
 
+/** Narrows any timeline item to the union that participates in visual compositing. */
 export function isVisual(item: Item): item is VisualItem {
   return item.type !== 'audio';
 }
 
+/**
+ * Narrows a timeline item to the kinds whose `in` point is measured on a time-based
+ * source; this is used when media time must be separated from timeline time.
+ */
 export function isTimedMedia(item: Item): item is VideoItem | AudioItem {
   return item.type === 'video' || item.type === 'audio';
 }

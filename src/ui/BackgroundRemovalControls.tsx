@@ -1,3 +1,8 @@
+/**
+ * Shared controls for a clip or studio source's color-key/subject cutout settings.
+ * The controls subscribe to model progress separately from the selected item so
+ * download/segmentation status can announce changes without project mutations.
+ */
 import { LoaderCircle, Pipette } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { BackgroundRemoval } from '../types';
@@ -6,9 +11,15 @@ import { formatBytes } from '../lib/util';
 import { gesture, Segmented, Slider, Swatches } from './common';
 
 const KEY_COLORS = ['#00ff00', '#00b140', '#0047bb', '#0000ff'];
+/** Formats slider fractions for user-facing percentage labels. */
 const pct = (value: number) => `${Math.round(value * 100)}%`;
+/** Gives a zero setting an explicit Off label while retaining a normal range formatter. */
 const off = (format: (value: number) => string) => (value: number) => (value <= 0 ? 'Off' : format(value));
 
+/**
+ * Controlled background-removal form. Edits are sent as patches so callers decide
+ * whether they apply to a timeline item, while status and errors remain live UI.
+ */
 export function BackgroundRemovalControls({
   value,
   onChange,

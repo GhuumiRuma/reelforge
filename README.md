@@ -125,6 +125,9 @@ Until step 2 is done, the workflow builds and checks the app but doesn't upload 
 
 ## Development
 
+For the internal data flow, media pipeline, method contracts and build/release
+architecture, see the [technical documentation](docs/README.md).
+
 ```sh
 npm install
 npm run dev      # dev server, reachable from your phone on the same Wi-Fi

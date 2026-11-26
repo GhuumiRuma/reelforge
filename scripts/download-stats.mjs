@@ -28,8 +28,11 @@ const WEEK = 7 * DAY;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+/** Adds a finite list of numeric values, starting from a zero total. */
 const sum = (numbers) => numbers.reduce((a, b) => a + b, 0);
+/** Formats a count and applies the plural suffix only when `n` is not one. */
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** Recognizes the non-negative safe integers accepted by persisted counters. */
 const whole = (n) => Number.isSafeInteger(n) && n >= 0;
 
 // ---------------------------------------------------------------------------------------------
@@ -38,6 +41,7 @@ const whole = (n) => Number.isSafeInteger(n) && n >= 0;
 
 const MARKER = /<!--\s*rf-banked-downloads:(\d+)\s*-->/;
 
+/** Serializes a carried-over download count in the release-note marker. */
 export const bankMarker = (n) => `<!-- rf-banked-downloads:${n} -->`;
 
 /** The count a release's notes carry over from the releases it replaced. */
@@ -47,6 +51,7 @@ export function readBanked(notes) {
   return whole(n) ? n : 0;
 }
 
+/** Selects GitHub release assets that are Android application packages. */
 const isApk = (asset) => typeof asset?.name === 'string' && asset.name.toLowerCase().endsWith('.apk');
 
 /** What one release has been downloaded: the count banked from replaced builds plus its APK's live count. */
@@ -83,8 +88,10 @@ export function totalDownloads(releases) {
  *   `last` is the latest raw count from GitHub and `offset` what was added to keep the total from dropping
  */
 
+/** Creates a versioned ledger before the stats branch has its first sample. */
 export const emptyLedger = () => ({ version: 1, offset: 0, last: 0, adjustments: [], series: [] });
 
+/** Canonicalizes a millisecond timestamp as the UTC ISO form stored in the ledger. */
 const iso = (ms) => new Date(ms).toISOString();
 
 /** @returns {Ledger} */
@@ -157,6 +164,7 @@ export function recordSnapshot(ledger, raw, atMs) {
 // Days and weeks (UTC)
 // ---------------------------------------------------------------------------------------------
 
+/** Returns the UTC midnight that starts the day containing `ms`. */
 export const startOfDay = (ms) => Math.floor(ms / DAY) * DAY;
 
 /** Monday 00:00 UTC of the week that contains `ms`. */
@@ -200,6 +208,7 @@ export function dailyCounts(series, firstDay, days) {
   });
 }
 
+/** Totals recorded days while treating missing history as zero for dashboard windows. */
 const sumKnown = (days) => sum(days.map((d) => d.n ?? 0));
 
 /** One Monday-to-Sunday week. `complete` means all seven days were recorded in full. */
@@ -222,20 +231,27 @@ export function weekSummary(series, weekStart) {
 // Reports
 // ---------------------------------------------------------------------------------------------
 
+/** Formats a timestamp as a compact UTC weekday/day/month label. */
 function dayName(ms) {
   const d = new Date(ms);
   return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
+/** Adds the four-digit UTC year to a compact day label. */
 const dayNameYear = (ms) => `${dayName(ms)} ${new Date(ms).getUTCFullYear()}`;
+/** Formats the UTC clock time used in reports. */
 const clock = (ms) => `${iso(ms).slice(11, 16)} UTC`;
+/** Extracts the UTC `YYYY-MM-DD` date from a timestamp. */
 const isoDay = (ms) => iso(ms).slice(0, 10);
+/** Prefixes positive deltas with `+` while leaving other values unchanged. */
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
 
+/** Builds a proportional text bar, with one character for any non-zero value. */
 function bar(n, max, mark, width) {
   if (!n || !max) return '';
   return mark.repeat(Math.max(1, Math.round((n / max) * width)));
 }
 
+/** Describes a complete week relative to the previous complete week. */
 function comparison(week, previous) {
   if (!week.complete || !previous.complete) return '';
   const change = week.total - previous.total;
@@ -243,6 +259,11 @@ function comparison(week, previous) {
   return `${change > 0 ? 'up' : 'down'} ${Math.abs(change)} from ${previous.total} the week before`;
 }
 
+/**
+ * Builds the Markdown rows shared by daily dashboards and weekly issues.
+ *
+ * Missing and partial samples remain visibly distinct from a true zero count.
+ */
 function dayTable(days, total) {
   const max = Math.max(0, ...days.map((d) => d.n ?? 0));
   const cell = (d) => (d.n === null ? '–' : `${d.n}${d.partial ? '\\*' : ''}`);
@@ -254,7 +275,9 @@ function dayTable(days, total) {
   ].join('\n');
 }
 
+/** Returns the repository's issue search for previously posted weekly reports. */
 const reportsLink = (repo) => `https://github.com/${repo}/issues?q=label%3A${REPORT_LABEL}`;
+/** Links to the branch that stores the persistent download ledger and dashboard. */
 const dashboardLink = (repo) => `https://github.com/${repo}/tree/${LEDGER_BRANCH}`;
 
 /**
@@ -288,7 +311,12 @@ export function weeklyReport(ledger, repo, weekStart) {
   return { title: `Weekly downloads: ${isoDay(weekStart)} to ${isoDay(lastDay)}`, body };
 }
 
-/** Finished weeks that have any numbers, newest first. */
+/**
+ * Collects finished weeks with recorded data, newest first.
+ *
+ * It stops before the first snapshot so incomplete historical windows cannot be
+ * mistaken for an empty week with zero downloads.
+ */
 function weekHistory(series, nowMs, weeks) {
   const first = Date.parse(series[0].t);
   const rows = [];
@@ -400,6 +428,13 @@ export function terminalReport(ledger, repo, nowMs, days = 14) {
 // GitHub
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * Performs an authenticated GitHub REST request with bounded retry.
+ *
+ * Transient network failures, HTTP 429 and 5xx responses are retried three times;
+ * client errors and eventual final responses are returned for the caller to
+ * interpret and report with command-specific context.
+ */
 async function request(path, accept = 'application/vnd.github+json') {
   const base = (process.env.GITHUB_API_URL || 'https://api.github.com').replace(/\/$/, '');
   const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
@@ -416,6 +451,7 @@ async function request(path, accept = 'application/vnd.github+json') {
   }
 }
 
+/** Paginates all repository releases, up to GitHub's 2,000-item API ceiling here. */
 async function fetchReleases(repo) {
   const releases = [];
   for (let page = 1; page <= 20; page++) {
@@ -437,6 +473,12 @@ async function fetchLedger(repo) {
   return parseLedger(await res.text());
 }
 
+/**
+ * Resolves the `owner/name` repository from an explicit option, Actions
+ * environment or the current checkout's origin URL, in that order.
+ *
+ * @throws {Error} When no reliable GitHub repository identifier can be found.
+ */
 function detectRepo(given) {
   const repo = given || process.env.GITHUB_REPOSITORY;
   if (repo) return repo;
@@ -459,6 +501,12 @@ const USAGE = `Usage:
   node scripts/download-stats.mjs snapshot --ledger file --out dir [--repo owner/name]
   node scripts/download-stats.mjs bank [release.json]`;
 
+/**
+ * Splits positional command tokens from `--name value` and `--name=value` options.
+ *
+ * The parser intentionally remains dependency-free; command handlers validate the
+ * options they actually consume.
+ */
 function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -474,6 +522,12 @@ function parseArgs(argv) {
   return args;
 }
 
+/**
+ * Returns the timestamp used by deterministic reports.
+ *
+ * `--now` exists primarily for tests and reproducible snapshots; normal workflow
+ * calls use the wall clock.
+ */
 function readNow(args) {
   const now = args.now ? Date.parse(args.now) : Date.now();
   if (!Number.isFinite(now)) throw new Error(`--now is not a date: ${args.now}`);
@@ -488,6 +542,12 @@ function bank(args) {
   console.log(bankMarker(banked + live));
 }
 
+/**
+ * Reads the current release count and writes a durable ledger sample plus reports.
+ *
+ * The command is deliberately non-destructive when no APK is published, which
+ * protects the history during the short replacement window in `android.yml`.
+ */
 async function snapshot(args) {
   if (!args.ledger || !args.out) throw new Error('snapshot needs --ledger <file> and --out <dir>.');
   const repo = detectRepo(args.repo);
@@ -516,6 +576,12 @@ async function snapshot(args) {
   console.log(`Weekly report: ${weekly.title}`);
 }
 
+/**
+ * Prints a human-readable live report without persisting another snapshot.
+ *
+ * An existing ledger is combined with a synthetic in-memory sample of the current
+ * release so the terminal view includes downloads since the last workflow run.
+ */
 async function report(args) {
   const repo = detectRepo(args.repo);
   const now = readNow(args);
@@ -533,6 +599,12 @@ async function report(args) {
   process.stdout.write(terminalReport(recordSnapshot(saved, live.total, now), repo, now, days));
 }
 
+/**
+ * Dispatches the command-line interface after parsing shared options.
+ *
+ * Returning the asynchronous command preserves its rejection for the caller's
+ * single error boundary at the script entry point.
+ */
 export async function main(argv) {
   const [command, ...rest] = argv;
   const args = parseArgs(rest);

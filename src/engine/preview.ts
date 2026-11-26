@@ -1,3 +1,9 @@
+/**
+ * Interactive editor preview scheduler. A bounded pool of hidden video
+ * elements (with WebCodecs fallback) supplies reusable frame canvases to the
+ * WebGL scene builder, while `AudioPlayback` owns the clock and this engine owns
+ * rAF, seeking, preroll, cutout requests, hit quads, and slot cleanup.
+ */
 import { ALL_FORMATS, BlobSource, CanvasSink, Input } from 'mediabunny';
 import type { Project, VideoItem } from '../types';
 import { readBackgroundRemoval } from '../lib/background';
@@ -15,7 +21,13 @@ const PREROLL = 1.5;
 const MAX_PIXELS = 1.6e6;
 let frameVersion = 0;
 
-/** Decodes frames through WebCodecs when the browser's <video> element cannot play a file. */
+/**
+ * On-demand WebCodecs replacement for a video element that cannot play a file.
+ *
+ * Requests collapse while a canvas fetch is busy and only the newest wanted
+ * timestamp is retried. The fallback scales to the active preview's maximum side
+ * and owns its Mediabunny input until the containing slot is destroyed.
+ */
 class SinkFallback {
   private input: Input | null = null;
   private sink: CanvasSink | null = null;
@@ -25,6 +37,7 @@ class SinkFallback {
   private disposed = false;
   readonly ready: Promise<boolean>;
 
+  /** Starts asynchronous track/sink initialization and stores the frame delivery callback. */
   constructor(
     mediaId: string,
     maxSide: number,
@@ -33,6 +46,11 @@ class SinkFallback {
     this.ready = this.init(mediaId, maxSide);
   }
 
+  /**
+   * Lazily loads the blob, verifies a decodable primary track, and constructs a
+   * small pooled `CanvasSink`. Any unsupported/decode setup failure resolves as
+   * `false`, letting the slot remain frame-less rather than throwing off-rAF.
+   */
   private async init(id: string, maxSide: number): Promise<boolean> {
     try {
       const blob = await getBlob(id);
@@ -56,6 +74,10 @@ class SinkFallback {
     }
   }
 
+  /**
+   * Coalesces a frame request with the currently running fetch, retaining only
+   * the latest timestamp. Identical repeated timestamps are ignored.
+   */
   request(t: number) {
     if (Math.abs(t - this.last) < 1e-3) return;
     if (this.busy) {
@@ -65,6 +87,7 @@ class SinkFallback {
     void this.fetch(t);
   }
 
+  /** Fetches the requested canvas (or one from 50 ms earlier) and retries the pending newest request. */
   private async fetch(t: number) {
     this.busy = true;
     try {
@@ -82,6 +105,7 @@ class SinkFallback {
     }
   }
 
+  /** Marks the object closed and releases its demuxer/sink references. */
   dispose() {
     this.disposed = true;
     this.input?.dispose();
@@ -90,6 +114,7 @@ class SinkFallback {
   }
 }
 
+/** Mutable decoder/video state retained in the preview slot pool. */
 interface Slot {
   id: string;
   mediaId: string;
@@ -112,6 +137,7 @@ interface Slot {
   off: () => void;
 }
 
+/** Construction callbacks and canvas used by one interactive preview owner. */
 export interface PreviewOptions {
   canvas: HTMLCanvasElement;
   getProject: () => Project;
@@ -128,7 +154,9 @@ export interface PreviewOptions {
  * pooled <video> elements, with the audio engine as the master clock.
  */
 export class PreviewEngine {
+  /** Master-clock scheduler used by the preview; public for one-shot audio access. */
   readonly audio: AudioPlayback;
+  /** GPU compositor owned by this engine and exposed for controlled pixel consumers. */
   readonly comp: Compositor;
   private texts = new TextCache();
   private slots = new Map<string, Slot>();
@@ -145,11 +173,13 @@ export class PreviewEngine {
   private failedMattes = new Set<string>();
   /** Hit-test quads of the last rendered frame (frame pixel space, topmost last). */
   quads: HitQuad[] = [];
+  /** Last composited width/height, used by callers that map frame geometry to the editor canvas. */
   frameW = 2;
   frameH = 2;
   /** Timeline time of the last rendered frame. */
   renderedAt = 0;
 
+  /** Creates compositor/audio/text resources, installs external invalidators, and schedules the first frame. */
   constructor(private opts: PreviewOptions) {
     this.comp = new Compositor(opts.canvas);
     this.comp.onRestored = () => this.requestRender();
@@ -172,15 +202,21 @@ export class PreviewEngine {
   // -------------------------------------------------------------------------
   // Public API
 
+  /** Whether the engine currently follows the audio master clock. */
   get playing() {
     return this.isPlaying;
   }
 
+  /** Current preview time: audio time while playing, paused/sought time otherwise. */
   get time() {
     return this.isPlaying ? this.audio.now() : this.t;
   }
 
-  /** CSS size of the on-screen canvas; determines the internal render resolution. */
+  /**
+   * Updates the requested short-side render resolution from CSS size and DPR.
+   * Work is rounded/clamped to a 180-1080 px short side and only a changed value
+   * schedules rendering.
+   */
   setViewport(cssW: number, cssH: number, dpr = window.devicePixelRatio || 1) {
     const s = clamp(Math.round(Math.min(cssW, cssH) * Math.min(dpr, 3)), 180, 1080);
     if (s !== this.short) {
@@ -189,14 +225,21 @@ export class PreviewEngine {
     }
   }
 
-  /** Call whenever the project changes. */
+  /**
+   * Invalidates failed cutout suppression and live audio remix after an edit,
+   * then schedules a fresh frame. It never replaces currently warm video slots.
+   */
   projectChanged() {
     this.failedMattes.clear();
     if (this.isPlaying) this.audio.invalidate();
     this.requestRender();
   }
 
-  /** Moves the playhead. While playing, playback continues from the new position. */
+  /**
+   * Moves the playhead. During playback it restarts the audio clock from the
+   * new time and forces video drift correction; while paused it stores the time
+   * and requests a frame. Sub-100 ms live jumps are ignored to avoid jitter.
+   */
   seek(t: number) {
     t = Math.max(0, t);
     if (this.isPlaying) {
@@ -211,14 +254,22 @@ export class PreviewEngine {
     this.requestRender();
   }
 
-  /** Shows a different time without moving the playhead (e.g. while trimming); null to clear. */
+  /**
+   * Temporarily renders a different time while paused (for trim/scrub previews)
+   * without changing `t`; passing `null` resumes the actual playhead.
+   */
   setPeek(t: number | null) {
     if (t === this.peekT) return;
     this.peekT = t;
     this.requestRender();
   }
 
-  /** Must be called directly from a user gesture (tap) so audio and video can start on iOS. */
+  /**
+   * Starts the audio clock from a user gesture and synchronously renders once so
+   * active `<video>.play()` calls also happen inside that gesture. It loops from
+   * the beginning when the paused playhead is at the end and notifies observers
+   * after playback has been scheduled.
+   */
   play() {
     if (this.isPlaying || this.disposed) return;
     const dur = projectDuration(this.opts.getProject());
@@ -248,6 +299,10 @@ export class PreviewEngine {
     this.kick();
   }
 
+  /**
+   * Captures the audio time, stops audio/video playback, reports paused time/state,
+   * and requests a stable still frame. Calling it while paused is a no-op.
+   */
   pause() {
     if (!this.isPlaying) return;
     const dur = projectDuration(this.opts.getProject());
@@ -260,17 +315,27 @@ export class PreviewEngine {
     this.requestRender();
   }
 
+  /** Toggles playback while preserving the normal play/pause side effects. */
   toggle() {
     if (this.isPlaying) this.pause();
     else this.play();
   }
 
+  /** Coalesces frame requests into one pending animation-frame callback. */
   requestRender() {
     if (this.disposed || this.raf) return;
     this.raf = requestAnimationFrame(this.loop);
   }
 
-  /** Renders the current frame immediately (used before reading pixels). */
+  /**
+   * Builds and composites the currently effective time immediately, before the
+   * next animation frame.
+   *
+   * Ready slot canvases are copied, the synchronous scene provider records its
+   * wants/hit quads, WebGL renders, and slot seek/playback state is synchronized.
+   * This is safe for pixel-read callers but still depends on previously decoded
+   * media; it does not await a not-ready frame.
+   */
   renderNow() {
     if (this.disposed) return;
     const p = this.opts.getProject();
@@ -298,6 +363,11 @@ export class PreviewEngine {
     this.opts.onRender?.();
   }
 
+  /**
+   * Stops playback, unregisters media/font/document observers, destroys slots,
+   * removes the hidden video container, and releases audio/text/GL resources.
+   * Repeated calls are ignored.
+   */
   dispose() {
     if (this.disposed) return;
     this.pause();
@@ -317,16 +387,26 @@ export class PreviewEngine {
   // -------------------------------------------------------------------------
   // Loop
 
+  /** Coalesces media-store and font readiness events into one redraw. */
   private onExternal = () => this.requestRender();
 
+  /** Pauses playback when the tab is hidden so audio/video do not keep burning resources. */
   private onVisibility = () => {
     if (document.visibilityState === 'hidden') this.pause();
   };
 
+  /** Starts a fresh rAF cycle when `play()` cannot rely on an already scheduled frame. */
   private kick() {
     if (!this.raf && !this.disposed) this.raf = requestAnimationFrame(this.loop);
   }
 
+  /**
+   * Animation-frame owner for playback and one-shot redraws.
+   *
+   * During playback it reports audio-clock time, schedules the next tick before
+   * rendering, and finalizes/pauses at project duration. Outside playback a
+   * requested frame runs exactly once.
+   */
   private loop = () => {
     this.raf = 0;
     if (this.disposed) return;
@@ -349,6 +429,10 @@ export class PreviewEngine {
     this.renderNow();
   };
 
+  /**
+   * Converts project aspect/short side to output dimensions, then scales down
+   * extreme aspect ratios to stay below the preview's pixel budget.
+   */
   private frameSize(p: Project) {
     let { w, h } = canvasSize(p.aspect, this.short);
     if (w * h > MAX_PIXELS) {
@@ -361,6 +445,13 @@ export class PreviewEngine {
   // -------------------------------------------------------------------------
   // Video slots
 
+  /**
+   * Records a requested source time and returns a ready canvas.
+   *
+   * If this item's slot is warming, it may borrow the closest already-decoded
+   * canvas for the same media to avoid a blank across splits/duplicates. The
+   * optional subject matte is attached by `withMatte`.
+   */
   private videoFrame(item: VideoItem, st: number) {
     this.wants.set(item.id, { item, st });
     let s = this.slots.get(item.id);
@@ -375,11 +466,20 @@ export class PreviewEngine {
     return this.withMatte(item, { source: s.canvas, version: s.version }, s.drawnAt);
   }
 
+  /** Returns the media-store image cache when ready and attaches any requested subject matte. */
   private imageFrame(item: Parameters<FrameProvider['image']>[0]) {
     const source = peekImage(item.mediaId);
     return source ? this.withMatte(item, { source, version: 1 }, null) : null;
   }
 
+  /**
+   * Augments a ready frame with an exact/recent subject matte.
+   *
+   * A miss launches inference only when no matte request is globally busy and
+   * that key has not failed; this throttles the preview to one worker request at
+   * a time. The bare frame is returned immediately so video continues, and a
+   * successful request schedules replacement rendering.
+   */
   private withMatte<T extends { mediaId: string } & Project['main'][number]>(
     item: T,
     frame: { source: TexImageSource; version: number | string },
@@ -405,10 +505,16 @@ export class PreviewEngine {
     return frame;
   }
 
+  /** Maximum intrinsic decode side, including a 640 px floor for crisp small viewports. */
   private maxSide() {
     return Math.max(this.frameW, this.frameH, 640);
   }
 
+  /**
+   * Copies the latest `<video>` frame into the slot canvas before scene build.
+   * WebCodecs slots are already fed by `SinkFallback`; native slots skip copy
+   * while seeking/not ready or unchanged since the last draw.
+   */
   private maybeDraw(s: Slot) {
     if (s.sink) return;
     const v = s.v;
@@ -418,6 +524,11 @@ export class PreviewEngine {
     s.drawnAt = v.currentTime;
   }
 
+  /**
+   * Downscales any ready canvas/video source into the reusable slot canvas.
+   * Canvas resize and draw failures preserve the previous texture frame; a
+   * successful copy increments the texture version for WebGL upload.
+   */
   private drawFrom(s: Slot, src: CanvasImageSource, sw: number, sh: number) {
     if (!sw || !sh) return;
     const k = Math.min(1, this.maxSide() / Math.max(sw, sh));
@@ -438,6 +549,15 @@ export class PreviewEngine {
     s.dirty = false;
   }
 
+  /**
+   * Constructs a hidden native video element and frame canvas for one item.
+   *
+   * Its internal event closures translate metadata/data/seek completion into
+   * slot state; a media error from the native element switches to
+   * `SinkFallback` only when metadata says WebCodecs may decode the file. All
+   * listeners are packaged into `off` so adoption/destruction cannot leak
+   * element handlers.
+   */
   private createSlot(id: string, mediaId: string, url: string): Slot {
     const v = document.createElement('video');
     v.muted = true;
@@ -527,6 +647,11 @@ export class PreviewEngine {
     return s;
   }
 
+  /**
+   * Stops and unloads a slot's video, disposes fallback decoding, removes its
+   * listeners/DOM node, clears canvas pixels, and deletes the matching GL
+   * texture. A slot id may be reused only after the old key is released.
+   */
   private destroySlot(s: Slot) {
     s.off();
     s.sink?.dispose();
@@ -543,6 +668,13 @@ export class PreviewEngine {
     this.comp.releaseTexture('vid:' + s.id);
   }
 
+  /**
+   * Returns a slot for an item, replacing one whose media id changed.
+   *
+   * Before creating a decoder, it adopts an idle slot showing the same media
+   * (favoring a removed item or most recently used slot). This preserves a warm
+   * decoder across split-point identities and releases the old GL cache key.
+   */
   private ensureSlot(item: VideoItem, inProject: () => Set<string>): Slot | null {
     let s = this.slots.get(item.id);
     if (s && s.mediaId !== item.mediaId) {
@@ -575,6 +707,12 @@ export class PreviewEngine {
     return this.createSlot(item.id, item.mediaId, url);
   }
 
+  /**
+   * Requests a source timestamp from the native/fallback decoder.
+   *
+   * Native seeks are coalesced while metadata is loading or an earlier seek is in
+   * flight; unchanged close requests can be skipped unless `force` is true.
+   */
   private seekSlot(s: Slot, t: number, force = false) {
     s.target = t;
     if (s.sink) {
@@ -599,12 +737,19 @@ export class PreviewEngine {
     }
   }
 
+  /** Pauses native playback when the slot leaves the active playing scene. */
   private stopSlot(s: Slot) {
     if (!s.playing) return;
     s.playing = false;
     s.v.pause();
   }
 
+  /**
+   * Synchronizes all frames requested by the latest scene build with decoder
+   * slots. During live playback slots run/drift-correct; during pause/peek they
+   * stop and seek. Unwanted slots stop, upcoming clips preroll, then LRU cleanup
+   * is attempted.
+   */
   private syncSlots(p: Project, t: number) {
     const live = this.isPlaying && this.peekT === null;
     const now = performance.now();
@@ -625,6 +770,13 @@ export class PreviewEngine {
     this.evict();
   }
 
+  /**
+   * Advances one slot during live playback.
+   *
+   * Extreme speed, endpoint, not-ready, fallback, and denied-play cases step by
+   * seeking; ordinary native slots play at item speed and receive a periodic
+   * hard seek or small playback-rate adjustment to follow the audio clock.
+   */
   private syncPlaying(s: Slot, item: VideoItem, st: number, now: number) {
     const v = s.v;
     s.target = st;
@@ -664,6 +816,11 @@ export class PreviewEngine {
     if (Math.abs(v.playbackRate - r) > 1e-3) v.playbackRate = r;
   }
 
+  /**
+   * Warms slots up to 1.5 s before their start, avoiding duplicate decoders when
+   * active/upcoming clips share one media asset. Prewarmed slots seek to the
+   * source in point but do not play until `wants` makes them active.
+   */
   private preroll(p: Project, t: number, inProject: () => Set<string>) {
     const busyMedia = new Set([...this.wants.values()].map((w) => w.item.mediaId));
     for (const it of [...p.main, ...p.overlays]) {
@@ -678,6 +835,11 @@ export class PreviewEngine {
     }
   }
 
+  /**
+   * Enforces the nominal six-slot pool by destroying least-recent idle slots.
+   * Active/wanted slots may temporarily exceed the limit rather than breaking
+   * the current frame.
+   */
   private evict() {
     if (this.slots.size <= MAX_SLOTS) return;
     const idle = [...this.slots.values()]

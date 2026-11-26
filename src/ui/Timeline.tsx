@@ -1,3 +1,9 @@
+/**
+ * Canvas timeline renderer and gesture controller. Main-track clips are contiguous
+ * but transition spans are split visually; overlays/text/audio remain lane-based.
+ * React observes store/theme/media changes while pointer and animation-frame work
+ * reads Zustand imperatively to keep high-frequency scrubbing and drawing cheap.
+ */
 import { Plus } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import type { AudioItem, ImageItem, Item, MainItem, MediaAsset, Project, TextItem, TrackKind, VideoItem } from '../types';
@@ -85,9 +91,14 @@ interface Gesture {
   z0: number;
 }
 
+/**
+ * Builds the vertically scrolled free-lane layout in fixed UI order, adding hint
+ * rows when text or audio is empty. The returned bottom bounds vertical scrolling.
+ */
 function buildRows(p: Project): { rows: Row[]; bottom: number } {
   const rows: Row[] = [];
   let y = LANES_TOP;
+  /** Adds one lane (or hint) and advances the next row's content-space y coordinate. */
   const push = (kind: FreeKind, lane: number, hint?: Row['hint']) => {
     rows.push({ kind, lane, y, hint });
     y += LANE_H + GAP;
@@ -102,6 +113,10 @@ function buildRows(p: Project): { rows: Row[]; bottom: number } {
   return { rows, bottom: y - GAP + 10 };
 }
 
+/**
+ * Derives each main clip's visual start/end by splitting transition overlap equally
+ * between neighbors. A temporary trim shift previews downstream ripple movement.
+ */
 function mainSpans(main: MainItem[], shiftFrom = Infinity, shift = 0): Span[] {
   const out: Span[] = [];
   for (let i = 0; i < main.length; i++) {
@@ -127,6 +142,10 @@ function markers(spans: Span[], X: (t: number) => number, sel: string | null) {
   return out;
 }
 
+/**
+ * Produces relevant trim snap targets. Downstream main clips are excluded because
+ * they move with the trimmed edge; free-item snapping uses every other edge.
+ */
 function snapList(p: Project, kind: TrackKind, index: number, id: string, time: number): number[] {
   if (kind === 'main') {
     // Clips after the trimmed one move with its edge, so they are not snap targets.
@@ -138,6 +157,11 @@ function snapList(p: Project, kind: TrackKind, index: number, id: string, time: 
   return [time, ...snapPoints(p, id)];
 }
 
+/**
+ * Draws the whole timeline and implements scrub, vertical scroll, pinch zoom,
+ * trim, free-item move, and long-press main reorder. Continuous writes are wrapped
+ * in one editor gesture; pointer completion, cancellation, and unmount all close it.
+ */
 export function Timeline() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -152,6 +176,7 @@ export function Timeline() {
   const autoRef = useRef(0);
   const ariaRef = useRef('');
 
+  /** Coalesces store/media/time notifications into at most one canvas frame. */
   const requestDraw = () => {
     if (!rafRef.current) {
       rafRef.current = requestAnimationFrame(() => {
@@ -161,10 +186,15 @@ export function Timeline() {
     }
   };
 
+  /** Converts a canvas-local x coordinate to project time under the pinned playhead. */
   const tAt = (x: number) => useTime.getState().time + (x - sizeRef.current.w / 2) / useEditor.getState().zoom;
 
   // ---------------------------------------------------------------- drawing
 
+  /**
+   * Paints free lanes, ruler, main clips, selection/keyframes/markers, and playhead
+   * from current stores. It also mirrors time into ARIA slider values.
+   */
   const draw = () => {
     const cv = canvasRef.current;
     const { w: W, h: H, dpr } = sizeRef.current;
@@ -180,6 +210,7 @@ export function Timeline() {
     const pal = timelinePalette(theme, look);
     const time = useTime.getState().time;
     const zoom = s.zoom;
+    /** Maps project time into the centered playhead coordinate system for this draw. */
     const X = (t: number) => W / 2 + (t - time) * zoom;
     const g = gRef.current;
     const sel = s.selectedId;
@@ -261,12 +292,17 @@ export function Timeline() {
 
   // ---------------------------------------------------------------- hit testing
 
+  /**
+   * Resolves markers, selected trim handles, clip bodies, and empty-track hints in
+   * visual hit order. Tap-only markers/hints are omitted for gesture initiation.
+   */
   const hitTest = (x: number, y: number, forTap: boolean): Hit => {
     const s = useEditor.getState();
     const p = s.project;
     if (!p) return null;
     const W = sizeRef.current.w;
     const time = useTime.getState().time;
+    /** Maps the store time/zoom pair into hit-test coordinates at event time. */
     const X = (t: number) => W / 2 + (t - time) * s.zoom;
     const sel = s.selectedId;
     if (y >= MAIN_TOP - 6 && y <= MAIN_TOP + MAIN_H + 4) {
@@ -310,14 +346,17 @@ export function Timeline() {
 
   // ---------------------------------------------------------------- inertia & autoscroll
 
+  /** Cancels an in-flight post-scrub animation before a newer gesture/wheel action. */
   const stopInertia = () => {
     cancelAnimationFrame(inertiaRef.current);
     inertiaRef.current = 0;
   };
 
+  /** Continues a recent scrub with decaying pixel velocity until the project edge. */
   const startInertia = (v: number) => {
     if (Math.abs(v) < 0.2) return;
     let last = performance.now();
+    /** Advances decaying scrub inertia one bounded animation-frame interval. */
     const step = (ts: number) => {
       const dt = Math.min(48, ts - last);
       last = ts;
@@ -339,9 +378,14 @@ export function Timeline() {
     inertiaRef.current = requestAnimationFrame(step);
   };
 
+  /**
+   * Scrolls time while trim/move/reorder is held near a canvas edge, recomputing the
+   * edit in the changing coordinate space until the gesture ends.
+   */
   const startAutoScroll = () => {
     if (autoRef.current) return;
     let last = performance.now();
+    /** Advances edge autoscroll and reapplies the active edit at the new time. */
     const step = (ts: number) => {
       const g = gRef.current;
       if (!g || (g.mode !== 'trim' && g.mode !== 'move' && g.mode !== 'reorder')) {
@@ -366,6 +410,7 @@ export function Timeline() {
 
   // ---------------------------------------------------------------- item gestures
 
+  /** Captures trim bounds, source asset, gesture snapshot, and snapping context. */
   const startTrim = (id: string, edge: 'start' | 'end', x: number) => {
     const g = gRef.current!;
     const s = useEditor.getState();
@@ -403,6 +448,10 @@ export function Timeline() {
     requestDraw();
   };
 
+  /**
+   * Applies one pointer delta to the original item, respecting lane bounds, nearby
+   * edge snapping, source duration, and an engine peek at the moved edge.
+   */
   const trimTo = (x: number) => {
     const g = gRef.current!;
     const s = useEditor.getState();
@@ -427,6 +476,10 @@ export function Timeline() {
     requestDraw();
   };
 
+  /**
+   * Clears preview peeking, commits one history step, and compensates playhead time
+   * for the downstream shift after a main clip's start is trimmed.
+   */
   const endTrim = () => {
     const g = gRef.current!;
     getEngine()?.setPeek(null);
@@ -439,6 +492,10 @@ export function Timeline() {
     }
   };
 
+  /**
+   * Promotes a pending press to main reorder or a free-lane gesture after 400 ms,
+   * pausing playback and retaining the original item/lane for all updates.
+   */
   const onLongPress = () => {
     const g = gRef.current;
     if (!g || g.mode !== 'pending' || g.down?.type !== 'item') return;
@@ -468,6 +525,7 @@ export function Timeline() {
     requestDraw();
   };
 
+  /** Maps a vertically scrolled pointer to an existing/new slot in a free track. */
   const laneAtY = (kind: TrackKind, y: number): number => {
     const rows = rowsRef.current.filter((r) => r.kind === kind && !r.hint);
     if (!rows.length) return 0;
@@ -475,6 +533,7 @@ export function Timeline() {
     return clamp(Math.floor((vy - rows[0].y + GAP / 2) / (LANE_H + GAP)), 0, rows.length);
   };
 
+  /** Moves a free item by captured time/lane deltas, snapping either edge independently. */
   const moveTo = (x: number, y: number) => {
     const g = gRef.current!;
     const s = useEditor.getState();
@@ -503,6 +562,7 @@ export function Timeline() {
     requestDraw();
   };
 
+  /** Updates the prospective main-track insertion index from the pointer's time. */
   const reorderTo = (x: number) => {
     const g = gRef.current!;
     const p = useEditor.getState().project;
@@ -516,6 +576,7 @@ export function Timeline() {
     requestDraw();
   };
 
+  /** Commits a changed main reorder in one store edit and seeks to the moved clip. */
   const endReorder = () => {
     const g = gRef.current!;
     const s = useEditor.getState();
@@ -530,6 +591,7 @@ export function Timeline() {
     haptic('light');
   };
 
+  /** Dispatches current pointer coordinates to the gesture's trim/move/reorder math. */
   const dragTo = (x: number, y: number) => {
     const g = gRef.current;
     if (!g) return;
@@ -540,11 +602,16 @@ export function Timeline() {
 
   // ---------------------------------------------------------------- pointer handlers
 
+  /** Converts client pointer coordinates into canvas-local CSS pixels. */
   const local = (e: { clientX: number; clientY: number }) => {
     const r = canvasRef.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
 
+  /**
+   * Captures a pointer, initializes one gesture record, starts edge trims, arms
+   * long-press movement, or turns a second pointer into pinch zoom.
+   */
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.button > 0) return;
     stopInertia();
@@ -609,6 +676,7 @@ export function Timeline() {
     if (h?.type === 'item') g.timer = window.setTimeout(onLongPress, LONG_PRESS_MS);
   };
 
+  /** Resolves slop into scrub/vertical scroll or routes active manipulation updates. */
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const g = gRef.current;
     if (!g || !g.pointers.has(e.pointerId)) return;
@@ -656,6 +724,10 @@ export function Timeline() {
     }
   };
 
+  /**
+   * Finishes the active pointer path, committing trim/move/reorder where applicable,
+   * optionally starting scrub inertia, and always stopping edge autoscroll.
+   */
   const onPointerEnd = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const g = gRef.current;
     if (!g || !g.pointers.delete(e.pointerId)) return;
@@ -695,6 +767,10 @@ export function Timeline() {
     requestDraw();
   };
 
+  /**
+   * Handles taps after drag suppression: transition sheet, text/audio hint, or clip
+   * selection/deselection. Drag-generated clicks cannot trigger a second action.
+   */
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (suppressClick.current) {
       suppressClick.current = false;
@@ -726,6 +802,7 @@ export function Timeline() {
     s.select(s.selectedId === h.id ? null : h.id);
   };
 
+  /** Opens the picker in the tap and appends selected visual media to the main track. */
   const addClips = () => {
     void pickFiles('video/*,image/*').then((files) => importAndInsert(files, 'main', { at: 'end' }));
   };
@@ -735,6 +812,7 @@ export function Timeline() {
   useEffect(() => {
     const wrap = wrapRef.current!;
     const cv = canvasRef.current!;
+    /** Synchronizes bitmap dimensions with CSS size and a capped device pixel ratio. */
     const resize = () => {
       const r = wrap.getBoundingClientRect();
       const dpr = Math.min(3, window.devicePixelRatio || 1);
@@ -755,8 +833,10 @@ export function Timeline() {
     const unsubTheme = useTheme.subscribe((s, prev) => {
       if (s.theme !== prev.theme || s.look !== prev.look) requestDraw();
     });
+    /** Invalidates the canvas when asynchronous thumbnails or waveforms arrive. */
     const onMedia = () => requestDraw();
     mediaEvents.addEventListener('update', onMedia);
+    /** Maps wheel input to zoom, time scroll/scrub, or vertical lane scrolling. */
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       stopInertia();
@@ -830,6 +910,7 @@ export function Timeline() {
 // ---------------------------------------------------------------------------
 // Drawing helpers
 
+/** Binary-searches for the longest ellipsized label that fits a measured canvas width. */
 function fitText(ctx: CanvasRenderingContext2D, text: string, max: number): string {
   if (max <= 8) return '';
   if (ctx.measureText(text).width <= max) return text;
@@ -843,6 +924,7 @@ function fitText(ctx: CanvasRenderingContext2D, text: string, max: number): stri
   return lo ? text.slice(0, lo) + '…' : '';
 }
 
+/** Width contract for empty-track hint chips, used by both painting and hit testing. */
 function hintWidth(hint: 'text' | 'audio') {
   return hint === 'text' ? 104 : 112;
 }
@@ -850,6 +932,7 @@ function hintWidth(hint: 'text' | 'audio') {
 /** A corner radius scaled by the Corners setting, as styles.css does from 6px up. The small ones stay crisp. */
 const rad = (pal: TimelinePalette, r: number): number => (r >= 5 ? r * pal.rs : r);
 
+/** Draws an empty audio/text lane hint at a stable position right of the playhead. */
 function drawHint(ctx: CanvasRenderingContext2D, pal: TimelinePalette, x: number, y: number, label: string) {
   const w = label === 'Add text' ? hintWidth('text') : hintWidth('audio');
   ctx.fillStyle = pal.raised;
@@ -866,6 +949,7 @@ function drawHint(ctx: CanvasRenderingContext2D, pal: TimelinePalette, x: number
   ctx.fillText(label, x + 30, cy + 0.5);
 }
 
+/** Paints the time ruler with adaptive major/minor spacing and nonnegative labels. */
 function drawRuler(ctx: CanvasRenderingContext2D, pal: TimelinePalette, W: number, time: number, zoom: number, X: (t: number) => number) {
   const step = STEPS.find((s) => s * zoom >= 64) ?? STEPS[STEPS.length - 1];
   const n = MINOR[step];
@@ -888,6 +972,7 @@ function drawRuler(ctx: CanvasRenderingContext2D, pal: TimelinePalette, W: numbe
   }
 }
 
+/** Returns the closest generated thumbnail when the exact asynchronous sample is missing. */
 function nearestThumb(images: (ImageBitmap | null)[], idx: number): ImageBitmap | null {
   for (let d = 0; d < images.length; d++) {
     const a = images[idx - d];
@@ -898,7 +983,7 @@ function nearestThumb(images: (ImageBitmap | null)[], idx: number): ImageBitmap 
   return null;
 }
 
-/** Square thumbnails tiled from the clip's (shifted) start; the clip path must already be clipped. */
+/** Tiles nearest square thumbnails from the clip's shifted source start into its clip path. */
 function drawThumbs(
   ctx: CanvasRenderingContext2D,
   it: VideoItem | ImageItem,
@@ -932,6 +1017,7 @@ function drawThumbs(
   }
 }
 
+/** Paints one transition-aware main clip with thumbnails or color and a status label. */
 function drawMainClip(
   ctx: CanvasRenderingContext2D,
   pal: TimelinePalette,
@@ -975,6 +1061,7 @@ function drawMainClip(
   ctx.restore();
 }
 
+/** Paints a free-lane visual/audio/text item with role-specific tint and content. */
 function drawFree(
   ctx: CanvasRenderingContext2D,
   pal: TimelinePalette,
@@ -1016,6 +1103,7 @@ function drawFree(
   ctx.restore();
 }
 
+/** Paints caption-marked text and its normalized label into a text lane. */
 function drawTextClip(
   ctx: CanvasRenderingContext2D,
   pal: TimelinePalette,
@@ -1047,6 +1135,7 @@ function drawTextClip(
   ctx.fillText(fitText(ctx, it.text.replace(/\s+/g, ' ').trim(), room), x, y + LANE_H / 2 + 0.5);
 }
 
+/** Samples cached peaks at visible pixels and draws volume/fade-aware waveform bars. */
 function drawWave(
   ctx: CanvasRenderingContext2D,
   it: AudioItem,
@@ -1088,6 +1177,7 @@ function drawWave(
   }
 }
 
+/** Paints the selected range outline and its two hit-tested trim handles. */
 function drawSelection(ctx: CanvasRenderingContext2D, pal: TimelinePalette, l: number, r: number, y: number, h: number) {
   ctx.strokeStyle = pal.accent;
   ctx.lineWidth = 2;
@@ -1108,6 +1198,7 @@ function drawSelection(ctx: CanvasRenderingContext2D, pal: TimelinePalette, l: n
   ctx.fill();
 }
 
+/** Paints keyframe diamonds and emphasizes the frame currently under the playhead. */
 function drawKeyframes(
   ctx: CanvasRenderingContext2D,
   pal: TimelinePalette,
@@ -1135,6 +1226,7 @@ function drawKeyframes(
   }
 }
 
+/** Paints a main-cut transition target with off/on bow-tie states. */
 function drawMarker(ctx: CanvasRenderingContext2D, pal: TimelinePalette, x: number, on: boolean) {
   const m = pal.marker;
   const cy = MAIN_TOP + MAIN_H / 2;
@@ -1164,6 +1256,7 @@ function drawMarker(ctx: CanvasRenderingContext2D, pal: TimelinePalette, x: numb
   }
 }
 
+/** Paints the destination bar and floating thumbnail shown during main-track reorder. */
 function drawReorder(ctx: CanvasRenderingContext2D, pal: TimelinePalette, spans: Span[], g: Gesture, X: (t: number) => number) {
   const cur = spans.findIndex((sp) => sp.it.id === g.id);
   if (cur < 0) return;

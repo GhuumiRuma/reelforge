@@ -1,3 +1,10 @@
+/**
+ * Pure timeline geometry, normalization, and editing operations.
+ *
+ * Main-track items are magnetic and may overlap only through transitions; overlay, text, and audio
+ * tracks use independent lanes. Operations mutate the supplied project and then normalize it so
+ * the UI, renderer, autosave, and export observe the same timeline invariants.
+ */
 import type {
   Aspect,
   AudioItem,
@@ -13,23 +20,42 @@ import type {
 import { ASPECTS, isVisual } from '../types';
 import { clamp, easeInOut, even, lerp, uid } from './util';
 
+/** Minimum timeline duration accepted by trims, splits, and imported timed items. */
 export const MIN_DUR = 0.1;
+/** Floating-point tolerance for adjacent item and keyframe boundaries. */
 const EPS = 1e-6;
+/** Tracks whose items may occupy arbitrary start positions and lanes. */
 export const FREE_TRACKS = ['overlays', 'texts', 'audios'] as const;
+/** Canonical order used for item search and whole-project traversals. */
 export const ALL_TRACKS: TrackKind[] = ['main', 'overlays', 'texts', 'audios'];
 
+/** Returns the exclusive timeline end of an item. */
 export const itemEnd = (it: { start: number; duration: number }) => it.start + it.duration;
 
+/**
+ * Deep-clones JSON project data, intentionally dropping prototypes and `undefined`.
+ * Project documents are plain data, so this is suitable for undo/edit snapshots.
+ */
 export function clonePlain<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
+/**
+ * Computes an even-pixel canvas size for a preset aspect and requested short side.
+ *
+ * Unknown aspects fall back to the first preset. Even dimensions are required by common video
+ * encoders, while the chosen preset's orientation determines which dimension is fixed.
+ */
 export function canvasSize(aspect: Aspect, shortSide: number): { w: number; h: number } {
   const a = ASPECTS.find((x) => x.id === aspect) ?? ASPECTS[0];
   if (a.w >= a.h) return { w: even((shortSide * a.w) / a.h), h: even(shortSide) };
   return { w: even(shortSide), h: even((shortSide * a.h) / a.w) };
 }
 
+/**
+ * Resolves the effective transition overlap contributed by the current main clip.
+ * The result is capped at half of either neighboring duration so both retain an exclusive section.
+ */
 export function transitionOverlap(prev: MainItem, cur: MainItem): number {
   const tr = cur.transition;
   if (!tr || tr.type === 'none') return 0;
@@ -49,12 +75,20 @@ export function layoutMain(main: MainItem[]): void {
   }
 }
 
+/**
+ * Compresses sparse lane numbers into a contiguous, display-friendly sequence.
+ * Item starts and durations are not changed.
+ */
 export function compactLanes(items: Item[]): void {
   const used = [...new Set(items.map((i) => i.lane))].sort((a, b) => a - b);
   const map = new Map(used.map((l, i) => [l, i]));
   for (const it of items) it.lane = map.get(it.lane) ?? 0;
 }
 
+/**
+ * Reestablishes all timeline invariants after an edit.
+ * It lays out the magnetic main track and normalizes free-track bounds/lanes in place.
+ */
 export function normalize(p: Project): void {
   layoutMain(p.main);
   for (const k of FREE_TRACKS) {
@@ -66,21 +100,28 @@ export function normalize(p: Project): void {
   }
 }
 
+/** Returns the end of the main track, or zero when it is empty. */
 export function mainEnd(p: Project): number {
   const l = p.main[p.main.length - 1];
   return l ? itemEnd(l) : 0;
 }
 
+/** Returns the maximum end across every track and therefore the full project duration. */
 export function projectDuration(p: Project): number {
   let d = mainEnd(p);
   for (const k of FREE_TRACKS) for (const it of p[k]) d = Math.max(d, itemEnd(it));
   return d;
 }
 
+/** Flattens the project in stable `main`, `overlays`, `texts`, `audios` order. */
 export function allItems(p: Project): Item[] {
   return [...p.main, ...p.overlays, ...p.texts, ...p.audios];
 }
 
+/**
+ * Finds an item and its owning track/index anywhere in the project.
+ * Missing or null IDs return `null`, allowing stale UI selections to fail safely.
+ */
 export function findItem(
   p: Project,
   id: string | null | undefined,
@@ -94,6 +135,10 @@ export function findItem(
   return null;
 }
 
+/**
+ * Returns the longest duration an item may currently occupy.
+ * Source-backed audio/video is bounded by remaining media; still media receives a one-hour cap.
+ */
 export function maxDuration(item: Item, asset?: MediaAsset): number {
   if (item.type === 'video' || item.type === 'audio') {
     if (!asset) return item.duration;
@@ -102,28 +147,42 @@ export function maxDuration(item: Item, asset?: MediaAsset): number {
   return 3600;
 }
 
+/**
+ * Maps project-timeline time to source-media time by applying trim-in, item start, and speed.
+ * Callers normally ensure the item is active at `t` before sampling.
+ */
 export function sourceTime(item: VideoItem | AudioItem, t: number): number {
   return item.in + (t - item.start) * item.speed;
 }
 
+/**
+ * Checks whether a half-open timeline range leaves `lane` free, excluding a moving item by ID.
+ * `EPS` keeps adjacent item boundaries from being treated as overlap.
+ */
 export function laneFree(items: Item[], lane: number, start: number, end: number, excludeId?: string): boolean {
   return !items.some(
     (o) => o.id !== excludeId && o.lane === lane && o.start < end - EPS && itemEnd(o) > start + EPS,
   );
 }
 
+/**
+ * Chooses the preferred lane when free, otherwise the first available lane below the UI cap.
+ * Lane 64 is the fallback sentinel when all lower lanes are occupied.
+ */
 export function pickLane(items: Item[], start: number, end: number, excludeId?: string, preferred = 0): number {
   if (laneFree(items, preferred, start, end, excludeId)) return preferred;
   for (let l = 0; l < 64; l++) if (laneFree(items, l, start, end, excludeId)) return l;
   return 64;
 }
 
+/** Counts the lanes needed to display all items, including sparse high-numbered lanes. */
 export function laneCount(items: Item[]): number {
   let n = 0;
   for (const it of items) n = Math.max(n, it.lane + 1);
   return n;
 }
 
+/** The outgoing/incoming main items and normalized transition state at one timeline instant. */
 export interface ActiveMain {
   a: MainItem;
   b: MainItem | null;
@@ -131,6 +190,12 @@ export interface ActiveMain {
   progress: number;
 }
 
+/**
+ * Resolves the one or two main clips visible at `t`.
+ *
+ * During a transition, `a` is outgoing, `b` is incoming, and `progress` spans the overlap.
+ * Near-boundary values use a small tolerance so rendering does not flicker at frame edges.
+ */
 export function activeMain(main: MainItem[], t: number): ActiveMain | null {
   let a: MainItem | null = null;
   let b: MainItem | null = null;
@@ -162,6 +227,7 @@ export function mainIndexAt(main: MainItem[], t: number): number {
 }
 
 /** Index at which newly imported main clips should be inserted (nearest clip boundary). */
+/** Returns the insertion point for new clips at the nearest main-clip midpoint boundary. */
 export function mainInsertIndex(main: MainItem[], t: number): number {
   for (let i = 0; i < main.length; i++) {
     const it = main[i];
@@ -170,6 +236,10 @@ export function mainInsertIndex(main: MainItem[], t: number): number {
   return main.length;
 }
 
+/**
+ * Collects all project-time positions that may attract a snapping edit.
+ * Visual keyframe times are converted from item-local to absolute time; one moving item is excluded.
+ */
 export function snapPoints(p: Project, excludeId?: string): number[] {
   const pts = [0];
   for (const it of allItems(p)) {
@@ -180,8 +250,15 @@ export function snapPoints(p: Project, excludeId?: string): number[] {
   return pts;
 }
 
+/** Interpolatable keyframe values after the item-local timestamp is removed. */
 export type KeyValues = Omit<Keyframe, 't'>;
 
+/**
+ * Samples an ordered keyframe sequence at local item time `t`.
+ *
+ * Values hold at either endpoint and interpolate with the same cubic ease-in-out progress between
+ * keys, keeping all transform fields on a single motion path.
+ */
 export function sampleKeyframes(kfs: Keyframe[], t: number): KeyValues | null {
   if (!kfs.length) return null;
   const pick = (k: Keyframe): KeyValues => ({
@@ -211,9 +288,16 @@ export function sampleKeyframes(kfs: Keyframe[], t: number): KeyValues | null {
   return pick(last);
 }
 
+/** Chooses the conventional stable-ID prefix for a cloned or split item kind. */
 const idPrefix = (it: Item) =>
   ({ video: 'v_', image: 'i_', color: 'c_', text: 't_', audio: 'a_' })[it.type];
 
+/**
+ * Partitions caption words at a text split.
+ *
+ * Right-side word timestamps become local to the clone. Plain text is left intact, while caption
+ * text is regenerated from each assigned word list.
+ */
 function splitWords(a: TextItem, b: TextItem, local: number) {
   if (!a.words?.length) return;
   const wa = a.words.filter((w) => w.start < local);
@@ -226,7 +310,14 @@ function splitWords(a: TextItem, b: TextItem, local: number) {
   }
 }
 
-/** Splits an item at timeline time t. Returns the id of the new right-hand part. */
+/**
+ * Splits an item at absolute timeline time `t`, returning the new right-hand ID.
+ *
+ * A split is rejected when either piece would be below `MIN_DUR`. Timed-media source trim moves
+ * by local seconds × speed, visual animation/keyframes are repartitioned around an interpolated
+ * midpoint, caption words become local to each side, and fades/transitions at the cut are cleared.
+ * The project is normalized after the splice.
+ */
 export function splitItem(p: Project, id: string, t: number): string | null {
   const f = findItem(p, id);
   if (!f) return null;
@@ -263,6 +354,7 @@ export function splitItem(p: Project, id: string, t: number): string | null {
   return b.id;
 }
 
+/** Removes an item from its track, normalizes the project, and reports whether it was found. */
 export function deleteItem(p: Project, id: string): boolean {
   const f = findItem(p, id);
   if (!f) return false;
@@ -271,6 +363,12 @@ export function deleteItem(p: Project, id: string): boolean {
   return true;
 }
 
+/**
+ * Clones an item and returns its fresh ID.
+ *
+ * Main items are inserted immediately after their source without copying transition metadata.
+ * Free-track items start at the source end and move to the first non-overlapping lane needed.
+ */
 export function duplicateItem(p: Project, id: string): string | null {
   const f = findItem(p, id);
   if (!f) return null;
@@ -289,6 +387,10 @@ export function duplicateItem(p: Project, id: string): string | null {
   return c.id;
 }
 
+/**
+ * Reorders a main-track item and re-runs magnetic layout.
+ * Invalid IDs are ignored and insertion indices are clamped to the available range.
+ */
 export function moveMainItem(p: Project, id: string, toIndex: number): void {
   const i = p.main.findIndex((m) => m.id === id);
   if (i < 0) return;
@@ -297,6 +399,10 @@ export function moveMainItem(p: Project, id: string, toIndex: number): void {
   normalize(p);
 }
 
+/**
+ * Moves a free-track item to an absolute start and a collision-free preferred lane.
+ * The moving item is excluded from its own overlap check; negative starts are clamped to zero.
+ */
 export function moveFreeItem(p: Project, id: string, start: number, lane: number): void {
   const f = findItem(p, id);
   if (!f || f.kind === 'main') return;
@@ -342,6 +448,12 @@ export function applyTrim(
   normalize(p);
 }
 
+/**
+ * Changes playback speed while preserving the represented source span where possible.
+ *
+ * Available source duration can shorten the result. Video keyframe times are scaled by the same
+ * ratio so motion remains aligned with the corresponding source frames.
+ */
 export function setSpeed(p: Project, id: string, speed: number, asset?: MediaAsset): void {
   const f = findItem(p, id);
   if (!f) return;
@@ -357,7 +469,10 @@ export function setSpeed(p: Project, id: string, speed: number, asset?: MediaAss
   normalize(p);
 }
 
-/** Sets a keyframe at item-local time t (replacing one within half a frame). */
+/**
+ * Returns a new sorted keyframe list with `k` at item-local time.
+ * Existing keys closer than the tolerance are replaced; the input array is not mutated.
+ */
 export function upsertKeyframe(kfs: Keyframe[], k: Keyframe, tolerance = 1 / 60): Keyframe[] {
   const out = kfs.filter((x) => Math.abs(x.t - k.t) > tolerance);
   out.push(k);

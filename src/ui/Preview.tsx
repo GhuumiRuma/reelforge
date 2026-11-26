@@ -1,3 +1,8 @@
+/**
+ * Canvas preview and direct-manipulation layer. React owns DOM geometry/lifecycle,
+ * while `PreviewEngine` renders video and exposes normalized hit quads; selection
+ * overlays and gestures remain imperative to avoid React work on every frame.
+ */
 import { ImagePlus, Pencil, RotateCw, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Project, VisualItem } from '../types';
@@ -45,6 +50,11 @@ interface Gesture {
   snapR: boolean;
 }
 
+/**
+ * Mounts the project renderer, tracks its responsive frame, and translates pointer
+ * gestures into one-step pose edits. Main clips are selected by tap but overlays
+ * and text can be dragged; focus mode disables manipulation and uses the whole area.
+ */
 export function Preview({ focus }: { focus: boolean }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -83,6 +93,10 @@ export function Preview({ focus }: { focus: boolean }) {
 
   // ---------------------------------------------------------------- selection overlay (imperative, per frame)
 
+  /**
+   * Projects the engine's frame-space hit quad into the CSS-sized selection layer.
+   * Called from render/playback/store notifications so controls follow canvas output.
+   */
   const drawSel = () => {
     const layer = layerRef.current;
     if (!layer) return;
@@ -106,6 +120,7 @@ export function Preview({ focus }: { focus: boolean }) {
     b.style.transform = `translate(${cx - w / 2}px, ${cy - h / 2}px) rotate(${q.rot}rad)`;
     const c = Math.cos(q.rot);
     const s = Math.sin(q.rot);
+    /** Places one corner control on the transformed quad, inset from frame edges. */
     const place = (el: HTMLElement | null, show: boolean, sx: number, sy: number) => {
       if (!el) return;
       el.style.display = show ? '' : 'none';
@@ -121,6 +136,7 @@ export function Preview({ focus }: { focus: boolean }) {
     place(scaleRef.current, true, 1, 1);
   };
 
+  /** Shows center alignment guides only while a move snaps to an axis. */
   const showGuides = (v: boolean, h: boolean) => {
     if (vGuideRef.current) vGuideRef.current.style.display = v ? '' : 'none';
     if (hGuideRef.current) hGuideRef.current.style.display = h ? '' : 'none';
@@ -130,6 +146,7 @@ export function Preview({ focus }: { focus: boolean }) {
 
   useLayoutEffect(() => {
     const el = wrapRef.current!;
+    /** Measures the available responsive container without forcing redundant state writes. */
     const measure = () => {
       const r = el.getBoundingClientRect();
       setBox((b) => (b && b.w === r.width && b.h === r.height ? b : { w: r.width, h: r.height }));
@@ -177,6 +194,7 @@ export function Preview({ focus }: { focus: boolean }) {
 
   // ---------------------------------------------------------------- gestures
 
+  /** Returns the current CSS frame box used to translate client to engine coordinates. */
   const frameRect = () => frameRef.current!.getBoundingClientRect();
 
   /** Topmost quad under a client point; the selected item wins when it is under the point. */
@@ -230,6 +248,7 @@ export function Preview({ focus }: { focus: boolean }) {
     return true;
   };
 
+  /** Writes one pose sample from gesture-start data as an undoable store edit. */
   const write = (v: KeyValues) => {
     const gs = gRef.current;
     if (!gs?.id || !gs.base) return;
@@ -240,6 +259,7 @@ export function Preview({ focus }: { focus: boolean }) {
     });
   };
 
+  /** Snaps near-quarter-turn rotations and haptically marks entry into the snap zone. */
   const snapRotation = (deg: number): number => {
     const gs = gRef.current!;
     const m = Math.round(deg / 90) * 90;
@@ -249,6 +269,7 @@ export function Preview({ focus }: { focus: boolean }) {
     return snap ? m : deg;
   };
 
+  /** Drags from the captured center with independent horizontal/vertical center snapping. */
   const moveTo = (clientX: number, clientY: number) => {
     const gs = gRef.current!;
     const sz = live.current.size!;
@@ -267,6 +288,7 @@ export function Preview({ focus }: { focus: boolean }) {
     write({ ...gs.pose, x: gs.pose.x + (dx + ox) / sz.w, y: gs.pose.y + (dy + oy) / sz.h });
   };
 
+  /** Maps two pointers into translation, scale, and rotation relative to pinch start. */
   const pinchTo = () => {
     const gs = gRef.current!;
     const sz = live.current.size!;
@@ -285,6 +307,7 @@ export function Preview({ focus }: { focus: boolean }) {
     });
   };
 
+  /** Maps the selected corner handle around the item center to scale and rotation. */
   const handleTo = (clientX: number, clientY: number) => {
     const gs = gRef.current!;
     const vx = clientX - gs.c0x;
@@ -296,6 +319,7 @@ export function Preview({ focus }: { focus: boolean }) {
     });
   };
 
+  /** Resolves a target and captures the reference pair when a second pointer lands. */
   const beginPinch = () => {
     const gs = gRef.current!;
     const [p1, p2] = [...gs.pointers.values()];
@@ -321,6 +345,7 @@ export function Preview({ focus }: { focus: boolean }) {
     suppressClick.current = true;
   };
 
+  /** Converts a selected control drag into a captured scale/rotate gesture. */
   const beginHandle = (clientX: number, clientY: number) => {
     const gs = gRef.current!;
     const id = useEditor.getState().selectedId;
@@ -337,6 +362,7 @@ export function Preview({ focus }: { focus: boolean }) {
     gs.a0 = Math.atan2(clientY - gs.c0y, clientX - gs.c0x);
   };
 
+  /** Commits any active gesture snapshot and hides transient alignment guides. */
   const finish = () => {
     const gs = gRef.current;
     if (gs?.began) {
@@ -346,6 +372,10 @@ export function Preview({ focus }: { focus: boolean }) {
     showGuides(false, false);
   };
 
+  /**
+   * Captures primary pointers and starts a pending touch/mouse gesture. Button
+   * controls are excluded so their clicks retain ordinary keyboard semantics.
+   */
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button > 0 || live.current.focus) return;
     const target = e.target as Element;
@@ -388,6 +418,7 @@ export function Preview({ focus }: { focus: boolean }) {
     if (gs.pointers.size === 2 && (gs.mode === 'pending' || gs.mode === 'move')) beginPinch();
   };
 
+  /** Routes movement to slop-checked move, pinch, or selected-handle manipulation. */
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const gs = gRef.current;
     if (!gs || !gs.pointers.has(e.pointerId)) return;
@@ -417,6 +448,7 @@ export function Preview({ focus }: { focus: boolean }) {
     }
   };
 
+  /** Ends one pointer, retaining pinch until both leave, and commits completed history. */
   const onPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     const gs = gRef.current;
     if (!gs || !gs.pointers.delete(e.pointerId)) return;
@@ -431,6 +463,10 @@ export function Preview({ focus }: { focus: boolean }) {
     }
   };
 
+  /**
+   * Suppresses post-drag clicks; otherwise toggles focus playback or resolves a tap
+   * into select, deselect, main-clip pause, or text-sheet editing behavior.
+   */
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (suppressClick.current) {
       suppressClick.current = false;
@@ -461,6 +497,7 @@ export function Preview({ focus }: { focus: boolean }) {
     s.select(hit.id);
   };
 
+  /** Opens the selected text item's edit sheet, priming the iOS keyboard in the tap. */
   const editText = () => {
     const id = useEditor.getState().selectedId;
     if (!id) return;
@@ -469,6 +506,7 @@ export function Preview({ focus }: { focus: boolean }) {
     useEditor.getState().openSheet('textEdit', id);
   };
 
+  /** Opens the device picker from the empty preview and imports into a new main track. */
   const addMedia = () => {
     void pickFiles('video/*,image/*').then((files) => importAndInsert(files, 'main', { autoAspect: true }));
   };

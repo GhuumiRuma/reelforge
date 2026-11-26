@@ -283,6 +283,7 @@ export const CORNERS: { id: CornersId; name: string; scale: number }[] = [
   { id: 'round', name: 'Round', scale: 1.5 },
 ];
 
+/** Resolves a saved corner ID to its radius multiplier, including a defensive default. */
 export const cornerScale = (id: CornersId): number => CORNERS.find((c) => c.id === id)?.scale ?? 1;
 
 export const DEFAULT_ACCENT = '#ff3d6e';
@@ -305,14 +306,18 @@ export const ACCENTS: { name: string; value: string }[] = [
   { name: 'Graphite', value: '#8e8e93' },
 ];
 
+/** Returns a human-readable name for preset accents and identifies other hex colors as custom. */
 export const accentName = (hex: string): string => ACCENTS.find((a) => a.value === hex.toLowerCase())?.name ?? 'Custom';
 
 export const DEFAULT_LOOK: Look = { style: 'standard', accent: DEFAULT_ACCENT, corners: 'standard' };
 
+/** Whether a look is identical to the stylesheet defaults and needs no override CSS. */
 export const isDefaultLook = (l: Look): boolean =>
   l.style === DEFAULT_LOOK.style && l.accent === DEFAULT_LOOK.accent && l.corners === DEFAULT_LOOK.corners;
 
+/** Runtime guard for persisted or patched surface-style IDs. */
 const isStyleId = (v: unknown): v is StyleId => STYLE_IDS.includes(v as StyleId);
+/** Runtime guard for persisted or patched corner-radius IDs. */
 const isCornersId = (v: unknown): v is CornersId => CORNERS.some((c) => c.id === v);
 
 /** The saved look. Anything missing, malformed or unknown falls back to the default, one field at a time. */
@@ -357,7 +362,7 @@ export function serializeLook(look: Look): string {
   });
 }
 
-/** The page background (--stage) of a look, which also tints the browser's own chrome. */
+/** The page background (`--stage`) of a look, also used for browser/system chrome. */
 export const lookBackground = (look: Look, theme: Theme): string => STYLES[look.style][theme].stage;
 
 // ---------------------------------------------------------------------------
@@ -516,6 +521,7 @@ export function sharedTokens(look: Look): Tokens {
   return out;
 }
 
+/** Emits one CSS rule only when it contains tokens, allowing the default look to emit no CSS. */
 const rule = (selector: string, tokens: Tokens): string => {
   const body = Object.entries(tokens)
     .map(([name, value]) => `${name}:${value}`)
